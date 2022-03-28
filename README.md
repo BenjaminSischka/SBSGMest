@@ -1,5 +1,5 @@
 # SBSGMest
-EM-Based Estimation Routine for Stochastic Block Smooth Graphon Models - see 'Stochastic Block Smooth Graphon Model' [arXiv:---] 
+EM-Based Estimation Routine for Stochastic Block Smooth Graphon Models - see 'Stochastic Block Smooth Graphon Model' [arXiv:2203.13304] 
 
 
  - SBSGMpy:
