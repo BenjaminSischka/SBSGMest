@@ -5,8 +5,7 @@ EM-Based Estimation Routine for Stochastic Block Smooth Graphon Models - see 'St
  - SBSGMpy:
  -------------
 
-	Python package for conducting the EM-Based Estimation Routine to estimate Stochastic Block Smooth Graphon Models
-	see 'Stochastic Block Smooth Graphon Model' [arXiv:---]
+	Python package for conducting the EM-based estimation routine to estimate Stochastic Block Smooth Graphon Models
 
 	* dependencies [(~ ...) = included in python standard library]:
 		(~ sys)
