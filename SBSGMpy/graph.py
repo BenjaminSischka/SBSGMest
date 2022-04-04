@@ -1,7 +1,7 @@
 '''
 
-Define a graph class which includes the latent variables U_i, i=1,...,N and is used for the graphon estimation.
-@author: sischkab
+Define a graph class which includes the latent variables U_i for graphon estimation.
+@author: Benjamin Sischka
 
 '''
 import numpy as np
@@ -27,7 +27,7 @@ class GraphClass:
             warnings.warn('adjacency matrix \'A\' contains loops')
             print('UserWarning: adjacency matrix \'A\' contains loops')
         if A.dtype != int:
-            if np.max(np.abs(A - A.astype(int))) != 0:
+            if not np.isclose(np.max(np.abs(A - A.astype(int))), 0):
                 warnings.warn('adjacency matrix \'A\' has been transformed into integer, some information has been lost')
                 print('UserWarning: adjacency matrix \'A\' has been transformed into integer, some information has been lost')
             A=A.astype(int)
@@ -61,7 +61,7 @@ class GraphClass:
 class ExtGraph(GraphClass):
     
     def __init__(self,A,labels=None,Us_real=None,Us_est=None,estMethod='degree'):
-        # A = adjacency matrix, labels = labels of the nodes, Us_real = real U's (in case of simulation), Us_est = estimated U's
+        # A = adjacency matrix, labels = labels of the nodes, Us_real = real U's (in case of simulation), Us_est = estimated U's,
         # estMethod = method for estimating Us_est [options: 'degree', 'mds', 'random', None]
         GraphClass.__init__(self, A, labels)
         self.Ord_emp={i: j for (i, k), j in zip(sorted(self.degree.items(), key = itemgetter(1)), range(self.N))}
@@ -289,7 +289,7 @@ class ExtGraph(GraphClass):
         else:
             return(plot1, plot2)
     def showNet(self, makeColor=True, Us_type=None, splitPos=None, byGroup=False, showColorBar=True, colorMap = 'jet', byDegree=False, with_labels=False, fig_ax=None, make_show=True, savefig=False, file_=None):
-        # Us_type = type of U's using for coloring , if None -> no coloring
+        # Us_type = type of U's using for coloring - if None -> no coloring
         Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else 'est')
         Us_ = self.Us_(Us_type)
         if fig_ax is None:
@@ -316,22 +316,22 @@ class ExtGraph(GraphClass):
                 Us_[np.logical_and(self.Us_(Us_type) >= splitPos[i], self.Us_(Us_type) < splitPos[i + 1])] = (Us_[np.logical_and(self.Us_(Us_type) >= splitPos[i], self.Us_(Us_type) < splitPos[i + 1])] - splitPos[i]) * (splitPos_new[i + 1] - splitPos_new[i]) / (splitPos[i + 1] - splitPos[i]) + splitPos_new[i]
             ## choose one of the two
             # #1:
-            # cmap = LinearSegmentedColormap.from_list('my_colormap', np.vstack((
+            # cmap_ = LinearSegmentedColormap.from_list('my_colormap', np.vstack((
             #     [LinearSegmentedColormap.from_list('name_' + i.__str__(), ['C' + (i*2).__str__(), 'C' + (i*2+1).__str__()])(vals_onColScal[i]) for i in range(nSubs)]
             # )))
             ##
             #2:
             cmap_vals = plt.get_cmap(colorMap)((np.concatenate(vals_onColScal)))
-            cmap = LinearSegmentedColormap.from_list('my_colormap', cmap_vals)
+            cmap_ = LinearSegmentedColormap.from_list('my_colormap', cmap_vals)
             ## choose end
         else:
-            cmap = plt.get_cmap(colorMap)
+            cmap_ = plt.get_cmap(colorMap)
         if makeColor and showColorBar:
-            hidePlot = ax.matshow(np.array([[0, 1]]), cmap=cmap, aspect='auto', origin='lower', extent=(-0.1, 0.1, -0.1, 0.1))
+            hidePlot = ax.matshow(np.array([[0, 1]]), cmap=cmap_, aspect='auto', origin='lower', extent=(-0.1, 0.1, -0.1, 0.1))
             hidePlot.set_visible(False)
         sortOrd = np.argsort(self.labels_())
         G_nx = nx.from_numpy_array(self.A[sortOrd][:,sortOrd])
-        node_color = cmap(Us_[sortOrd]) if makeColor else None
+        node_color = cmap_(Us_[sortOrd]) if makeColor else None
         net1 = nx.draw_networkx(G_nx, pos=nx.kamada_kawai_layout(G_nx), with_labels=with_labels, node_size=(self.degree_()[sortOrd] / np.max(self.degree_()) *50) if byDegree else 35,
                                 node_color=node_color, cmap=None, width=0.2, style='solid')
         ## applies a normalization on coloring [vmin = min(Us), vmax = max(Us)]
@@ -403,8 +403,8 @@ def GraphByGraphon(graphon=None,w=None,Us_real=None,N=None,randomSample=True,est
         Us_real = np.array([Us_real[lab_i] for lab_i in (list(Us_real.keys()) if (labels is None) else (list(labels.values()) if (labels.__class__ == dict) else labels))]) if (Us_real.__class__ == dict) else Us_real
         if not N is None:
             if N != len(Us_real):
-                warnings.warn('parameter for size of U\'s has not been used')
-                print('UserWarning: parameter for size of U\'s has not been used')
+                warnings.warn('parameter \'N\' for specifying the order of the graph has not been used')
+                print('UserWarning: parameter \'N\' for specifying the order of the graph has not been used')
     N = len(Us_real)
     A = np.random.binomial(n=1, p=w_fct(Us_real,Us_real))
     A[np.tril_indices(N)] = A.T[np.tril_indices(N)]

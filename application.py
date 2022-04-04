@@ -1,7 +1,7 @@
 '''
 
-Application of EM based graphon estimation.
-@author: sischkab
+Application of the EM-based graphon estimation.
+@author: Benjamin Sischka
 
 '''
 import sys,os
@@ -58,7 +58,7 @@ trueInit = False  # logical whether to start with true model (true ordering + tr
 if initPostDistr and (not (initGraphonEst or trueInit)):
     raise TypeError('no initial graphon estimation available')
 
-N = 100  # dimension of network (only used if simulate == True)  # *** 500
+N = 80  # dimension of network (only used if simulate == True)  # *** 500
 Us_real = None  # specify initial real U's (only used if simulate == True)
 randomSample = True  # logical whether the real U's are a random or an equidistant sample (only used if simulate == True & Us_real == None)
 
@@ -120,7 +120,7 @@ n_eval = 3  # number of evaluation points for the trajectory for observing conve
 ### Define graphon (if simulation is considered -> simulate = True)
 
 if simulate:
-    exec('graphon0=byExID' + byExID_nb.__str__() + '(idX=idX, size=1000)')
+    exec('graphon0=byExID' + byExID_nb.__str__() + '(idX=idX, size=1001)')
     graphonMin0, graphonMax0 = np.max([np.floor(np.min(graphon0.mat) / 0.05) *0.05, 0]), np.min([np.ceil(np.max(graphon0.mat) / 0.05) *0.05, 1])
 
 useSameGraph = np.any([simulate and (not useIndividGraphs), not simulate])

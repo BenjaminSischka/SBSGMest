@@ -1,7 +1,7 @@
 '''
 
-Create a Gibbs sampling routine to approximate the posterior distribution of U.
-@author: sischkab
+Define a Gibbs sampler to approximate the posterior distribution of U.
+@author: Benjamin Sischka
 
 '''
 import numpy as np

@@ -1,7 +1,7 @@
 '''
 
 Define a graphon class.
-@author: sischkab
+@author: Benjamin Sischka
 
 '''
 import numpy as np
@@ -104,7 +104,7 @@ def fctToFct(fct):
 # Define Graphon Class
 class Graphon:
     
-    def __init__(self,fct=None,mat=None,size=500):
+    def __init__(self,fct=None,mat=None,size=501):
         # fct = specific graphon function, mat = approx. graphon function on regular grid, size = fineness of the graphon matrix
         if fct is None:
             if mat is None:
@@ -121,7 +121,7 @@ class Graphon:
                     warnings.warn('the partitioning of the graphon in a grid \'mat\' is not exactly according to the graphon function \'fct\' or might be rotated')
                     print('UserWarning: the partitioning of the graphon in a grid \'mat\' is not exactly according to the graphon function \'fct\' or might be rotated')
     def showColored(self, vmin=None, vmax=None, vmin_=0.01, log_scale=False, ticks = [0, 0.25, 0.5, 0.75, 1], showColorBar=True, showSplitPos=False, linestyle='--', colorMap = 'plasma_r', fig_ax=None, make_show=True, savefig=False, file_=None):
-        if (self.mat.min() < 0) or (self.mat.max() > 1):
+        if (self.mat.min() < -1e-3) or (self.mat.max() > 1 + 1e-3):
             warnings.warn('graphon has bad values, correction has been applied -> codomain: [0,1]')
             print('UserWarning: graphon has bad values, correction has been applied -> codomain: [0,1]')
         self_mat = np.minimum(np.maximum(self.mat,0),1)
@@ -226,7 +226,7 @@ class Graphon:
             plt.close(plt.gcf())
         else:
             return(eval('plotSlices' + (', cbar' if showColorBar else '')))
-    def showExpDegree(self,size=100,norm=False,fmt='-',title=True,showSplitPos=False,make_show=True,savefig=False,file_=None):
+    def showExpDegree(self,size=101,norm=False,fmt='-',title=True,showSplitPos=False,make_show=True,savefig=False,file_=None):
         if self.byMat:
             g_ = self.mat.mean(axis=0)
             us = np.linspace(0,1,self.mat.shape[1])
@@ -260,7 +260,7 @@ class Graphon:
 
 
 # Define graphon generating function by predefined functions
-def byExID1(idX,size=100):
+def byExID1(idX,size=101):
     # idX = id of function (see below), size = fineness of the graphon matrix
     examples = {
                 1: lambda u,v: 1/2*(u+v),
@@ -298,7 +298,7 @@ def byExID1(idX,size=100):
 #out: graphon
 
 # Define graphon generating function by predefined functions
-def byExID2(idX,size=100):
+def byExID2(idX,size=101):
     # idX = id of function (see below), size = fineness of the graphon matrix
     examples = {
                 #continuous functions
@@ -418,7 +418,7 @@ def byExID2(idX,size=100):
 #out: graphon
 
 # Define graphon generating function by predefined structures
-def byExID3(idX,size=100):
+def byExID3(idX,size=101):
     # idX = id of structure (see below), size = fineness of the graphon matrix
     structure = {
                  1: {'u_lim': np.array([0,0.5,1]), 'wMat': np.array([[0.8,0.2],[0.2,0.8]])},
@@ -462,8 +462,8 @@ def byExID3(idX,size=100):
 #out: graphon
 
 # Define graphon by B-spline function
-def byBSpline(tau, P_mat=None, theta=None, order=1,size=100):
-    # tau = inner knot positions, theta = parameters, order = order of the B-splines
+def byBSpline(tau, P_mat=None, theta=None, order=1, size=101):
+    # tau = inner knot positions, P_mat/theta = parameters in form of matrix/vector, order = order of the B-splines
     if order == 0:
         if P_mat is None:
             if theta is None:
@@ -503,7 +503,7 @@ def byBSpline(tau, P_mat=None, theta=None, order=1,size=100):
 #out: graphon
 
 # Define graphon by multiple B-spline functions
-def byBSpline_mult(tau_ext_list=None, tau_list=None, P_mat_ext_list=None, P_mat_list=None, order=1, size=100):
+def byBSpline_mult(tau_ext_list=None, tau_list=None, P_mat_ext_list=None, P_mat_list=None, order=1, size=101):
     # tau_(ext)_list = inner knot positions (extended or not), P_mat_(ext)_list = parameters in matrix form (extended or not), order = order of the B-splines
     if tau_ext_list is None:
         tau_ext_list = [np.concatenate((np.repeat(-0.1, 2), tau_list[i], np.repeat(1.1, 2))) for i in range(len(tau_list))]
@@ -544,7 +544,7 @@ def byBSpline_mult(tau_ext_list=None, tau_list=None, P_mat_ext_list=None, P_mat_
 #out: graphon
 
 # Define graphon generating function by predefined structures
-def byExID4(idX,size=100):
+def byExID4(idX,size=101):
     # idX = id of structure (see below), size = fineness of the graphon matrix
     structure = {
                  1: {'tau_list': [np.array([0, 0, 0.1, 0.2, 0.2]), np.array([0.2, 0.2, 0.4, 0.6, 0.8, 1.0, 1.0])],
@@ -583,7 +583,7 @@ def randomGraphon(size=5, equDeg=False):
 #out: graphon
 
 # Sort graphon by degree profile
-def sortGraphon(graphon,size=1000,segmts=None):
+def sortGraphon(graphon,size=1001,segmts=None):
     # graphon = graphon, size = preciseness of information extracting from graphon in, segmts = segments concerning the sorting, if larger than size -> segments decompose into single lines
     mat = graphon.mat if graphon.byMat else fctToMat(graphon.fct,size=size)
     if segmts is None:

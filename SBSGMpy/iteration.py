@@ -1,7 +1,7 @@
 '''
 
-Run the EM based algorithm -> iteration between the sampling (E-) and the estimation (M-) step.
-@author: sischkab
+Create the EM-type algorithm, meaning a routine that iterates between the sampling (E-) and the estimation (M-)step.
+@author: Benjamin Sischka
 
 '''
 import numpy as np

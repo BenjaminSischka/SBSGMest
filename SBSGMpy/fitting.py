@@ -1,7 +1,7 @@
 '''
 
-Fit the graphon for a given graph and known U's.
-@author: sischkab
+Fit the graphon for a given graph and conditional on the U_i.
+@author: Benjamin Sischka
 
 '''
 import numpy as np
@@ -483,7 +483,7 @@ class Estimator:
                     [np.fill_diagonal(logProbMat_i, 0) for logProbMat_i in logProbMat]
                     logLik = np.sum([np.sum(logProbMat_i) for logProbMat_i in logProbMat])
                     AIC = -2 * logLik + 2 * (df_lambda + (nSubs -1))
-                    AICc = -2 * logLik + 2 * (df_lambda + (nSubs -1)) + ((2 * (df_lambda + (nSubs -1)) * ((df_lambda + (nSubs -1)) + 1)) / (((self.sortG.N ** 2) * m) - (df_lambda + (nSubs -1)) - 1))
+                    AICc = -2 * logLik + 2 * (df_lambda + (nSubs -1)) + ((2 * (df_lambda + (nSubs -1)) * ((df_lambda + (nSubs -1)) + 1)) / (((self.sortG.N ** 2 - self.sortG.N) * m) - (df_lambda + (nSubs -1)) - 1))
                     AICL1 = -2 * logLik + np.log(self.sortG.N ** 2 - self.sortG.N) * df_lambda + 2 * (nSubs -1)
                     AICL2 = -2 * logLik + 2 * df_lambda + np.log(self.sortG.N) * (nSubs -1)
                     AICL2b = -2 * logLik + 2 * df_lambda_correct + np.log(self.sortG.N ** 2 - self.sortG.N) * nSubs ** 2 + np.log(self.sortG.N) * (nSubs -1)

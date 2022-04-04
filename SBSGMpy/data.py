@@ -1,7 +1,7 @@
 '''
 
 Create graphs from real-world data.
-@author: sischkab
+@author: Benjamin Sischka
 
 '''
 import os
