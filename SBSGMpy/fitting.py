@@ -414,6 +414,9 @@ class Estimator:
                 print('UserWarning: the following communities are empty: ' + ', '.join((np.where(np.array([np.logical_and(Us_mult >= splitPos[i_], Us_mult < splitPos[i_ + 1]).sum() for i_ in range(nSubs)]) == 0)[0] +1).astype(str)) + '; estimation results in .5')
             nSpline1d = len(tau) - k - 1
             nSpline = nSpline1d**2
+            if (optForAIC or calcAIC):
+                N_squ_eff = self.sortG.N ** 2 - self.sortG.N
+                N_squ_eff_log = np.log(N_squ_eff)
             if k == 1:
                 B = np.array([np.array([interpolate.bisplev(x=np.sort(Us), y=np.sort(Us), tck=(tau, tau, np.lib.pad([1], (i, nSpline - i - 1), 'constant', constant_values=(0)), k, k), dx=0, dy=0) for i in np.arange(nSpline)])[:, np.argsort(np.argsort(Us)), :][:, :, np.argsort(np.argsort(Us))] for Us in Us_mult])
             else:
@@ -438,7 +441,7 @@ class Estimator:
             A_ = cvxopt.matrix(A2)
             cvxopt.solvers.options['show_progress'] = False
             def estTheta(lambda_, onlyAIC=False):
-                theta_t = np.repeat(np.mean(self.sortG.degree_()) / self.sortG.N, nSpline)
+                theta_t = np.repeat(self.sortG.density, nSpline)
                 differ = 5
                 index_marker = 1
                 while (differ > 0.01**2):
@@ -483,11 +486,11 @@ class Estimator:
                     [np.fill_diagonal(logProbMat_i, 0) for logProbMat_i in logProbMat]
                     logLik = np.sum([np.sum(logProbMat_i) for logProbMat_i in logProbMat])
                     AIC = -2 * logLik + 2 * (df_lambda + (nSubs -1))
-                    AICc = -2 * logLik + 2 * (df_lambda + (nSubs -1)) + ((2 * (df_lambda + (nSubs -1)) * ((df_lambda + (nSubs -1)) + 1)) / (((self.sortG.N ** 2 - self.sortG.N) * m) - (df_lambda + (nSubs -1)) - 1))
-                    AICL1 = -2 * logLik + np.log(self.sortG.N ** 2 - self.sortG.N) * df_lambda + 2 * (nSubs -1)
+                    AICc = -2 * logLik + 2 * (df_lambda + (nSubs -1)) + ((2 * (df_lambda + (nSubs -1)) * ((df_lambda + (nSubs -1)) + 1)) / ((N_squ_eff * m) - (df_lambda + (nSubs -1)) - 1))
+                    AICL1 = -2 * logLik + N_squ_eff_log * df_lambda + 2 * (nSubs -1)
                     AICL2 = -2 * logLik + 2 * df_lambda + np.log(self.sortG.N) * (nSubs -1)
-                    AICL2b = -2 * logLik + 2 * df_lambda_correct + np.log(self.sortG.N ** 2 - self.sortG.N) * nSubs ** 2 + np.log(self.sortG.N) * (nSubs -1)
-                    ICL = -logLik + (1/2) * (df_lambda * np.log(self.sortG.N ** 2 - self.sortG.N) + (nSubs -1) * np.log(self.sortG.N))
+                    AICL2b = -2 * logLik + 2 * df_lambda_correct + N_squ_eff_log * nSubs ** 2 + np.log(self.sortG.N) * (nSubs -1)
+                    ICL = -logLik + (1/2) * (N_squ_eff_log * df_lambda + np.log(self.sortG.N) * (nSubs -1))
                 else:
                     df_lambda = None  # !!!
                     df_lambda_correct = None  # !!!
@@ -522,10 +525,13 @@ class Estimator:
             P_mat_sep_ext = None
             nodeInd_i_ = None  # !!!
             nodeInd_j_ = None  # !!!
+            if not (optForAIC or calcAIC):
+                optCrit = None
         else:
             nSpline1d = nKnots + k - 1
             nSpline = np.dot(nSpline1d[np.newaxis].T, nSpline1d[np.newaxis])
             nSpl1_cum = np.cumsum(np.append([0], nSpline1d))
+            N_squ_eff_log = np.log(self.sortG.N ** 2 - self.sortG.N)
             if (np.isscalar(lambda_) or (lambda_ is None)):
                 lambda_ = np.full((nSubs, nSubs), np.nan if (lambda_ is None) else lambda_)
             if lambda_.shape != (nSubs, nSubs):
@@ -596,7 +602,7 @@ class Estimator:
                         L_part_2 = np.identity(nSpline1d[j_])[:-1] - np.hstack((np.zeros((nSpline1d[j_] - 1, 1)), np.identity(nSpline1d[j_] - 1)))
                         I_part_1 = np.identity(nSpline1d[j_])
                         I_part_2 = np.identity(nSpline1d[i_])
-                        penalize = np.dot(np.kron(I_part_1, L_part_1).T, np.kron(I_part_1, L_part_1)) + np.dot(np.kron(L_part_2, I_part_2).T, np.kron(L_part_2, I_part_2))
+                        penalize = np.dot(np.kron(L_part_1, I_part_1).T, np.kron(L_part_1, I_part_1)) + np.dot(np.kron(I_part_2, L_part_2).T, np.kron(I_part_2, L_part_2))
                         G_ = cvxopt.matrix(-A1)
                         A_ = cvxopt.matrix(A2) if (i_ == j_) else None
                         cvxopt.solvers.options['show_progress'] = False
@@ -663,18 +669,19 @@ class Estimator:
                                 if i_ == j_:
                                     [np.fill_diagonal(logProbMat_i, 0) for logProbMat_i in logProbMat]
                                 logLik = np.sum([np.sum(logProbMat_i) for logProbMat_i in logProbMat])
+                                N_squ_eff_reduc = np.sum([(N_part_i[l] * N_part_j[l] - (N_part_i[l] if (i_ == j_) else 0)) for l in range(m)])
                                 AIC_part = -2 * logLik + 2 * df_lambda
-                                AICc_part = -2 * logLik + 2 * df_lambda + ((2 * df_lambda * (df_lambda + 1)) / (np.sum([(N_part_i[l] * N_part_j[l] - (N_part_i[l] if (i_ == j_) else 0)) for l in range(m)]) - df_lambda - 1))  # wrong !!!
-                                AICL1_part = -2 * logLik + np.log(self.sortG.N ** 2 - self.sortG.N) * df_lambda
+                                AICc_part = -2 * logLik + 2 * df_lambda + ((2 * df_lambda * (df_lambda + 1)) / (N_squ_eff_reduc - df_lambda - 1))  # wrong !!!
+                                AICL1_part = -2 * logLik + N_squ_eff_log * df_lambda
                                 AICL2_part = -2 * logLik + 2 * df_lambda
                                 AICL2b_part = -2 * logLik + 2 * df_lambda_correct
-                                ICL_part = -logLik + (1/2) * np.log(self.sortG.N ** 2 - self.sortG.N) * df_lambda
+                                ICL_part = -logLik + (1/2) * N_squ_eff_log * df_lambda
                             else:
-                                df_lambda = None  # !!!
-                                df_lambda_correct = None  # !!!
+                                df_lambda = 0  # !!!
+                                df_lambda_correct = 0  # !!!
                                 logProbMat = None  # !!!
-                                logLik = None  # !!!
-                                AIC_part, AICc_part, AICL1_part, AICL2_part, AICL2b_part, ICL_part = None, None, None, None, None, None
+                                logLik = 0  # !!!
+                                AIC_part, AICc_part, AICL1_part, AICL2_part, AICL2b_part, ICL_part = 0, 0, 0, 0, 0, 0
                             return(eval('(' + ('' if onlyAIC else 'Pi, mat2, fisher, logProbMat, logLik, df_lambda, df_lambda_correct, theta_t_part, AIC_part, AICc_part, AICL1_part, AICL2_part, AICL2b_part, ICL_part, "AICL2b", ') + 'AICL2b_part)'))
                         if optForAIC:
                             lambdaMin = 0 if (lambdaMin is None) else lambdaMin
@@ -721,13 +728,16 @@ class Estimator:
                     df_lambda_correct_ += df_lambda_correct_part * (1 if (i_ == j_) else 2)  # !!!
                     nodeInd_i_.append(nodeInd_i)  # !!!
                     nodeInd_j_.append(nodeInd_j)  # !!!
-            AIC += 2 * (nSubs - 1)
-            AICc += 2 * (nSubs - 1) + ((2 * (nSubs - 1) * ((nSubs - 1) + 1)) / ((self.sortG.N * m) - (nSubs - 1) - 1))  # wrong !!!
-            AICL1 += 2 * (nSubs - 1)
-            AICL2 += np.log(self.sortG.N) * (nSubs - 1)
-            AICL2b += np.log(self.sortG.N ** 2 - self.sortG.N) * nSubs ** 2 + np.log(self.sortG.N) * (nSubs - 1)
-            ICL += (1/2) * ((nSubs -1) * np.log(self.sortG.N))
-            optValue = eval(optCrit)
+            if (optForAIC or calcAIC):
+                AIC += 2 * (nSubs - 1)
+                AICc += 2 * (nSubs - 1) + ((2 * (nSubs - 1) * ((nSubs - 1) + 1)) / ((self.sortG.N * m) - (nSubs - 1) - 1))  # wrong !!!
+                AICL1 += 2 * (nSubs - 1)
+                AICL2 += np.log(self.sortG.N) * (nSubs - 1)
+                AICL2b += N_squ_eff_log * nSubs ** 2 + np.log(self.sortG.N) * (nSubs - 1)
+                ICL += (1/2) * ((nSubs -1) * np.log(self.sortG.N))
+                optValue = eval(optCrit)
+            else:
+                AIC, AICc, AICL1, AICL2, AICL2b, ICL, optCrit, optValue = None, None, None, None, None, None, None, None
             theta_t = P_mat.reshape(nSpl1_cum[-1]**2)
         tau_sep_ext = [np.concatenate((np.repeat(-0.1, k + 1), tau_sep[i], np.repeat(1.1, k + 1))) for i in range(nSubs)]
         tau_new, tau_sep_ext_new = copy(tau), copy(tau_sep_ext)

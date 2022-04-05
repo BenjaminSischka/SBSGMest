@@ -23,7 +23,8 @@ class GraphClass:
         # A = adjacency matrix, labels = labels of the nodes
         if not (A.shape[0] == A.shape[1]):
             raise ValueError('adjacency matrix \'A\' is not quadratic')
-        if not np.isclose(np.max(np.abs(np.diag(A))), 0):
+        self.noLoops = np.isclose(np.max(np.abs(np.diag(A))), 0)
+        if not self.noLoops:
             warnings.warn('adjacency matrix \'A\' contains loops')
             print('UserWarning: adjacency matrix \'A\' contains loops')
         if A.dtype != int:
@@ -40,18 +41,17 @@ class GraphClass:
             if len(np.unique(np.array(list(labels.values()) if (labels.__class__ == dict) else  labels))) != self.N:
                 raise ValueError('labels are not unique')
             self.labels = {i: labels[i] for i in range(self.N)}
-        if np.allclose(A, A.T, atol=1e-10):
+        self.symmetry = np.allclose(A, A.T, atol=1e-10)
+        if self.symmetry:
             self.degree = {i: j for i, j in zip(list(self.labels.values()), np.sum(A, axis = 1))}
-            self.symmetry = True
         else:
             warnings.warn('adjacency matrix \'A\' is not symmetric')
             print('UserWarning: adjacency matrix \'A\' is not symmetric')
             self.inDegree = {i: j for i, j in zip(list(self.labels.values()), np.sum(A, axis = 0))}
             self.outDegree = {i: j for i, j in zip(list(self.labels.values()), np.sum(A, axis = 1))}
-            self.symmetry = False
         self.A = copy(A)
-        self.averDeg = self.A.sum(axis=0).mean()
-        self.density = self.A.sum() / (self.N * (self.N - (1 if np.allclose(np.diag(self.A), 0) else 0)))
+        self.averDeg = np.array(list((self.degree if self.symmetry else self.outDegree).values())).mean()
+        self.density = self.averDeg / (self.N - (1 if self.noLoops else 0))
 #out: Graph Class
 #     A = adjacency matrix, labels = labels of the nodes, N = order of the graph, (in-/out-)degree = dictionary of the (in-/out-)degrees,
 #     symmetry = logical whether the adjacency matrix is symmetric
