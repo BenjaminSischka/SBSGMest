@@ -7,7 +7,6 @@ Define a Gibbs sampler to approximate the posterior distribution of U.
 import numpy as np
 import math
 import scipy.stats as stats
-from scipy.stats import mode
 import scipy.ndimage.filters as flt
 from sklearn.neighbors import KernelDensity
 import matplotlib.pyplot as plt
@@ -24,10 +23,6 @@ class Sample:
         # w_fct = graphon function used for posterior sampling (alternatively to 'graphon'),
         # N_fine = fineness of the garphon discretization (for faster results),
         # use_origFct = logical whether to use original graphon function or discrete approx
-        # sortG = sorted extended graph, Us_type = type of U's used as start values
-        # # graphonEst = estimated graphon, wEst_fct = estimated graphon function (alternatively to 'graphonEst'),
-        # # graphonReal = real graphon, wReal_fct = real graphon function (alternatively to 'graphonReal')
-        # # N_fine = fineness of the garphon discretization (for faster results)
         if sortG.sorting is None:
             warnings.warn('no specification about Us_type (see sortG.sorting), empirical degree ordering is used')
             print('UserWarning: no specification about Us_type (see sortG.sorting), empirical degree ordering is used')
@@ -35,30 +30,9 @@ class Sample:
             warnings.warn('input graph is now sorted by empirical degree')
             print('UserWarning: input graph is now sorted by empirical degree')
         self.sortG = sortG
-        ## use single attributes instead of object itself
-        # self.Us = sortG.Us_(sortG.sorting)
-        # self.A = sortG.A
-        # self.Us_real = sortG.Us_('real')
-        # self.N = sortG.N
         self.labels = sortG.labels_()  # save for iteration -> allowing for re-identification
-        ## make no copy of sortG to allow for direct modifications of its attributes
-        # sortG_new = sortG.makeCopy()
-        # if not Us_type is None:
-        #     sortG_new.sort(Us_type=Us_type)
-        #     self.Us = sortG_new.Us_(Us_type)  # np.array(list(eval('sortG_new.Us_' + Us_type + '.values()')))
-        # else:
-        #     if sortG_new.sorting is None:
-        #         warnings.warn('no specification about Us_type (see sortG.sorting), empirical degree ordering is used')
-        #         # raise TypeError('no specification about Us_type (see sortG.sorting)')
-        #         sortG_new.sort(Us_type='emp')
-        #         self.Us = sortG_new.Us_('emp')
-        #     else:
-        #         self.Us = sortG_new.Us_(sortG_new.sorting)
-        # self.A = sortG_new.A
-        # self.Us_real = sortG_new.Us_('real')
-        # self.N = sortG_new.N
         if N_fine is None:
-            N_fine = 3*self.sortG.N
+            N_fine = int(np.round((3.15 - 2 / (1 + np.exp(- 5e-3 * (self.sortG.N - 500)))) * self.sortG.N))
         if graphon is None:
             if w_fct is None:
                 raise TypeError('no information about graphon')
@@ -74,37 +48,22 @@ class Sample:
                 self.splitPos = graphon.splitPos
             except AttributeError:
                 self.splitPos = None
-        ## allow for including true and est graphon
-        # if graphonEst is None:
-        #     self.wEst_fct = (copy(wEst_fct) if (not wEst_fct is None) else None) if use_origFct else \
-        #         matToFct(mat=fctToMat(wEst_fct, size=N_fine) if (not wEst_fct is None) else None)
-        # else:
-        #     self.wEst_fct = copy(graphonEst.fct) if use_origFct else \
-        #         matToFct(mat=copy(graphonEst.mat) if (graphonEst.byMat & (graphonEst.mat.shape[0] <= N_fine)) else \
-        #             fctToMat(graphonEst.fct, size=N_fine))
-        #     if not wEst_fct is None:
-        #         warnings.warn('function \'wEst_fct\' has not been used')
-        # if graphonReal is None:
-        #     self.wReal_fct = (copy(wReal_fct) if (not wReal_fct is None) else None) if use_origFct else \
-        #         matToFct(mat=fctToMat(wReal_fct, size=N_fine) if (not wReal_fct is None) else None)
-        # else:
-        #     self.wReal_fct = copy(graphonReal.fct) if use_origFct else \
-        #         matToFct(mat=copy(graphonReal.mat) if (graphonReal.byMat & (graphonReal.mat.shape[0] <= N_fine)) else \
-        #             fctToMat(graphonReal.fct, size=N_fine))
-        #     if not wReal_fct is None:
-        #         warnings.warn('function \'wReal_fct\' has not been used')
-        self.U_MCMC, self.U_MCMC_all = np.zeros((0, self.sortG.N)), np.zeros((0, self.sortG.N))
-        self.acceptRate = np.array([])
-    def gibbs(self,steps=300,rep=10,proposal='logit_norm',sigma_prop=2,gamma=.5,splitPos=None,returnAllGibbs=False,averageType='mean',updateGraph=False,use_stdVals=None,printWarn=True):  # ,tau=None,real=False
-        # steps = steps of Gibbs iterations, rep = number of repetitions/sequences, sigma_prop = variance of sampling step (proposal distribution), gamma = probability to propose new position within current group,
-        # real = logical whether to use the real or the estimated graphon function
-        # w_fct=self.wReal_fct if real else self.wEst_fct
+        self.U_MCMC, self.U_MCMC_all = None, None
+        self.acceptRate = None
+    def gibbs(self,steps=300,rep=10,proposal='logit_norm',sigma_prop=2,gamma=.5,splitPos=None,averageType='mean',returnAllGibbs=False,updateGraph=False,use_stdVals=None,printWarn=True):
+        # steps = steps of Gibbs iterations, rep = number of repetitions/sequences, proposal = type of proposal (options: 'logit_norm', 'exclus_unif', 'uniform', 'mixture'),
+        # sigma_prop = variance of sampling step (only for proposal='logit_norm' or 'mixture'), gamma = probability to propose new position within current group (only for proposal='mixture'),
+        # splitPos = split positions according to the graphon (if there are any), averageType = type of averaging the Gibbs sampling sequence (options: 'mean', 'median', 'mode'), 
+        # returnAllGibbs = logical whether to return all Gibbs sampling stages, updateGraph = logical whether input graph should be updated,
+        # use_stdVals = logical whether to use standardized U's or as given from averaging directly, printWarn = logical whether to print warning when graph has been updated
+        self.U_MCMC = np.zeros((rep, self.sortG.N))
+        self.acceptRate = np.zeros(rep)
         if returnAllGibbs:
             self.U_MCMC_all = np.zeros((rep*steps, self.sortG.N))
         if splitPos is None:
             if self.splitPos is None:
                 self.splitPos = np.array([0, 1])
-                if averageType in ['exclus_unif', 'mixture']:
+                if ((proposal in ['exclus_unif', 'mixture']) or (averageType == 'mode')):
                     warnings.warn('splitPos has been automatically set to {0,1}')
                     print('UserWarning: splitPos has been automatically set to {0,1}')
         else:
@@ -118,23 +77,20 @@ class Sample:
         #u_t=np.minimum(np.maximum(self.sortG.Us_(self.sortG.sorting), 1e-5), 1-1e-5)
         for rep_step in range(rep):
             Decision = np.zeros(shape=[steps,self.sortG.N], dtype=bool)
-            #U_MCMC, Z_star, U_star, Alpha, = np.zeros(shape=[steps,self.sortG.N]), np.zeros(shape=[steps,self.sortG.N]), np.zeros(shape=[steps,self.sortG.N]), np.zeros(shape=[steps,self.sortG.N])
             for step in range(steps):
                 for k in np.random.permutation(np.arange(self.sortG.N)):
                     if proposal == 'logit_norm':
                         z_star_k=np.random.normal(loc=math.log(u_t[k]/(1-u_t[k])),scale=sigma_prop)
                         u_star_k=math.exp(z_star_k)/(1+math.exp(z_star_k))
-                    if proposal == 'exclus_unif':
-                        # uniform proposal over all other subintervals
-                        #ival_k = [(tau[i_k-1], tau[i_k]) for i_k in [np.searchsorted(tau,u_t[k])]][0]
-                        ## splitPos instead of tau (depends on how the SBM is designed)
+                    elif proposal == 'exclus_unif':
+                        ## uniform proposal over all other subintervals
                         ival_k = [(self.splitPos[i_k-1], self.splitPos[i_k]) for i_k in [np.min([np.max([np.searchsorted(self.splitPos,u_t[k]), 0]), len(self.splitPos) -1])]][0]
                         ival_diff = np.diff(ival_k)[0]
                         z_star_k=np.random.uniform(0,1 -ival_diff)
                         u_star_k=z_star_k + (ival_diff if (ival_k[0] <= z_star_k) else 0)
-                    if proposal == 'uniform':
+                    elif proposal == 'uniform':
                         u_star_k=np.random.uniform(0,1,1)
-                    if proposal == 'mixture':
+                    elif proposal == 'mixture':
                         if (u_t[k] >= self.splitPos[-1]):  # !!!
                             warnings.warn('u_k (=' + u_t[k].__str__() + ') is out of splitPos (=[' + ', '.join(self.splitPos.astype(str)) + '])')
                             print('UserWarning: u_k (=' + u_t[k].__str__() + ') is out of splitPos (=[' + ', '.join(self.splitPos.astype(str)) + '])')
@@ -147,6 +103,8 @@ class Sample:
                         else:
                             z_star_k=np.random.uniform(0,1 -ival_diff)
                             u_star_k=z_star_k + (ival_diff if (ival_k[0] <= z_star_k) else 0)
+                    else:
+                        raise ValueError('proposal type \'' + str(proposal) + '\' is not implemented')
                     u_no_k=np.delete(u_t, k)
                     y_no_k=np.delete(self.sortG.A[k], k)
                     w_fct_star_k=np.minimum(np.maximum(self.w_fct(u_star_k,u_no_k), 1e-5), 1-1e-5)
@@ -157,7 +115,7 @@ class Sample:
                     if proposal == 'logit_norm':
                         alpha=min(1,prod_k*((u_star_k*(1-u_star_k))/(u_t[k]*(1-u_t[k]))))
                     if proposal == 'exclus_unif':
-                        # if uniform proposal over all other subintervals has been chosen
+                        ## if uniform proposal over all other subintervals has been chosen
                         alpha=min(1,prod_k*((1-ival_diff)/(1-[(tau[i_k] - tau[i_k-1]) for i_k in [np.searchsorted(tau,u_star_k)]][0])))  # self.splitPos instead of tau (depends on how the SBM is designed)
                     if proposal == 'uniform':
                         alpha=min(1,prod_k)
@@ -166,42 +124,23 @@ class Sample:
                             alpha=min(1,prod_k*(((u_star_k -ival_k[0])*(ival_k[1] -u_star_k))/((u_t[k] -ival_k[0])*(ival_k[1] -u_t[k]))))
                         else:
                             alpha = min(1, prod_k * ((1 - ival_diff) / (1 - [(self.splitPos[i_k] - self.splitPos[i_k - 1]) for i_k in [np.searchsorted(self.splitPos, u_star_k)]][0])))
-                            ## if u_star_k might by drawing process be outside of (min(self.splitPos),max(self.splitPos))
-                            # alpha=min(1,prod_k*((1-ival_diff)/(1-[(self.splitPos[i_k] - self.splitPos[i_k-1]) for i_k in [np.min([np.max([np.searchsorted(self.splitPos,u_star_k), 0]), len(self.splitPos) - 1])]][0])))
-                    # if alpha < 0:
-                    #     if alpha > -1e-5:
-                    #         alpha = 0
-                    #     else:
-                    #         print('alpha = ', alpha)
-                    #         raise ValueError('negative acceptance probability')
                     Decision[step,k] = (np.random.binomial(n=1,p=alpha)==1)
                     if Decision[step,k]:
                         u_t[k] = np.min([np.max([u_star_k, 1e-5]), 1-1e-5])
                     if returnAllGibbs:
-                        self.U_MCMC_all[rep_step * steps + step,k] = u_t[k]
-                    #Z_star[step,k] = z_star_k
-                    #U_star[step,k] = u_star_k
-                    #Alpha[step,k] = alpha
-                #U_MCMC[step] = copy(u_t)
-            self.U_MCMC = np.vstack((self.U_MCMC, u_t))
+                        self.U_MCMC_all[rep_step * steps + step, k] = u_t[k]
+            self.U_MCMC[rep_step] = u_t
             new_acceptRate = np.sum(Decision)/(self.sortG.N*steps)
-            self.acceptRate = np.append(self.acceptRate, new_acceptRate)
-            print('Acceptance Rate', new_acceptRate)
-        #result = type('', (), {})()
-        #result.U_MCMC, result.Z_star, result.U_star, result.Alpha, result.Decision = U_MCMC, Z_star, U_star, Alpha, Decision
-        #self.result = result
-        #
-        # if self.splitPos is None:
-        #     self.splitPos = np.array([0,1]) if (splitPos is None) else splitPos
-        # else:
-        #     if not splitPos is None:
-        #         warnings.warn('[].splitPos has been specified by input graphon, extra argument \'splitPos\' has not been used')
+            self.acceptRate[rep_step] = new_acceptRate
+            print('Acceptance rate in repetition ' + (rep_step+1).__str__() + ' out of ' + rep.__str__() + ': ', new_acceptRate)
         if averageType == 'mean':
             self.Us_new = np.mean(self.U_MCMC, axis=0)
-        if averageType == 'median':
+        elif averageType == 'median':
             self.Us_new = np.median(self.U_MCMC, axis=0)
-        if averageType == 'mode':
-            self.Us_new = np.array([np.mean([self.splitPos[i - 1], self.splitPos[i]]) for ind_line in np.searchsorted(self.splitPos, self.U_MCMC).T for i in mode(ind_line)[0]])
+        elif averageType == 'mode':
+            self.Us_new = np.array([np.mean([self.splitPos[i - 1], self.splitPos[i]]) for ind_line in np.searchsorted(self.splitPos, self.U_MCMC).T for i in stats.mode(ind_line)[0]])
+        else:
+            raise ValueError('averaging method \'' + str(averageType) + '\' is not implemented')
         self.Us_new_std = np.zeros(self.sortG.N)
         memb1 = np.maximum(np.searchsorted(self.splitPos, self.Us_new), 1)
         for i in range(1,len(self.splitPos)):
@@ -220,9 +159,6 @@ class Sample:
             if printWarn:
                 warnings.warn('U\'s from input graph have been updated')
                 print('UserWarning: U\'s from input graph have been updated')
-        # self.Us = self.Us_new_std if use_stdVals else self.Us_new
-        # if printWarn:
-        #     warnings.warn('Us from input graph should be adjusted, use [].Us')
     def updateGraph(self, use_stdVals):
         try:
             self.sortG.update(Us_est=self.Us_new_std if use_stdVals else self.Us_new)  # only Us_est should be changed; if self.sortG.sorting=='real'_or_'emp' the result will anyway be saved as Us_est
@@ -251,7 +187,7 @@ class Sample:
             plt.close(plt.gcf())
         else:
             return(plot1, plot2)
-    def showPostDistr(self, ks_lab=None, ks_abs=None, Us_type_label=None, Us_type_add=None, distrN_fine=1000, useAllGibbs=True, EMstep_sign='(1)', figsize=None, mn_=None, useTightLayout=True, w_pad=2, h_pad = 1.5, make_show=True, savefig=False, file_=None):  # , real=False, top=0.8
+    def showPostDistr(self, ks_lab=None, ks_abs=None, Us_type_label=None, Us_type_add=None, distrN_fine=1000, useAllGibbs=True, EMstep_sign='(1)', figsize=None, mn_=None, useTightLayout=True, w_pad=2, h_pad = 1.5, make_show=True, savefig=False, file_=None):
         # ks_lab = labels of the nodes for which the posterior is calculated
         if not hasattr(self, 'Us_new'):
             raise TypeError('posterior distribution can only be calculated after the Gibbs sampling has been executed, use [].gibbs()')
@@ -273,8 +209,7 @@ class Sample:
             Us_no_k = (self.U_MCMC if useAllGibbs else self.Us_new.reshape(1, self.sortG.N))[:, np.invert(pos_ki)]
             distrMat = np.array([[]]).reshape(0, distrN_fine)
             for i in (range(self.U_MCMC.shape[0]) if useAllGibbs else [0]):
-                distr_Uk_uncorr = np.array([(probs**y_no_k * (1 - probs)**(1 - y_no_k)).prod(axis=1) for probs in [self.w_fct(evalPoints, Us_no_k[i])]])  # (self.wReal_fct if real else self.wEst_fct)
-                # distr_Uk_uncorr = np.array([np.prod(probs**y_no_k * (1 - probs)**(1 - y_no_k)) for u_k in evalPoints for probs in [(self.wReal_fct if real else self.wEst_fct)(Us_no_k[i], u_k).flatten()]])
+                distr_Uk_uncorr = np.array([(probs**y_no_k * (1 - probs)**(1 - y_no_k)).prod(axis=1) for probs in [self.w_fct(evalPoints, Us_no_k[i])]])
                 distrMat = np.row_stack((distrMat, distr_Uk_uncorr * len(distr_Uk_uncorr) / np.sum(distr_Uk_uncorr)))
             distr_Uk[0, i_k, :] = np.sum(distrMat, axis=0) * (1 / (self.U_MCMC.shape[0] if useAllGibbs else 1))
         distr_UkFinal = np.sum(distr_Uk, axis=0)

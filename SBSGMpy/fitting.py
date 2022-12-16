@@ -80,7 +80,7 @@ def estSplitPos(A, nSubs):
         if (n_part > 1):
             N_trim = n_part * size_part
             A_new = A[i:(N_trim + i)][:, i:(N_trim + i)]
-            diff_list = np.append(diff_list, np.array([np.append((np.diff(A_new.reshape(N_trim, n_part, size_part).mean(axis=2).reshape((n_part, size_part, n_part)).mean(axis=1), 1) ** 2).sum(axis=0), [] if (n_part == (A.shape[1] // size_part)) else [0])]), axis=0)
+            diff_list = np.append(diff_list, np.array([np.append(np.nansum(np.diff(A_new.reshape(N_trim, n_part, size_part).mean(axis=2).reshape((n_part, size_part, n_part)).mean(axis=1), 1) ** 2, axis=0), [] if (n_part == (A.shape[1] // size_part)) else [0])]), axis=0)
     diff_locWhichMax = diff_list.argmax(axis=0)
     diff_sort = diff_list.max(axis=0).argsort()[::-1]
     diff_whichMax = np.array([]).astype(int)
@@ -188,6 +188,7 @@ class Estimator:
             warnings.warn('input graph is now sorted by empirical degree')
             print('UserWarning: input graph is now sorted by empirical degree')
         self.sortG = sortG
+        self.graph_updated = False
     def GraphonEstByHist(self, h=None, N_fine=None, cuts=None):
          # h = bandwidth of histogram summarization, N_fine = fineness of the graphon, cuts = proportions at which the adj. mat. should be cut
         return (Graphon(mat=smoothAdjMat(mat=self.sortG.A, h=h, N_fine=N_fine, cuts=cuts).H))
@@ -234,7 +235,7 @@ class Estimator:
         A *= 1 / Us_mult.shape[0]
         return (Graphon(mat=flt.gaussian_filter(A, sigma=sigma, mode='constant', cval=0) * (1 / flt.gaussian_filter(np.ones(A.shape) - np.identity(A.shape[0]), sigma=sigma, mode='constant', cval=0))))
     def GraphonEstBySpline(self, k=1, nSubs=None, nKnots=None, splitPos=None, est_splitPos=True, useOneBasis=False, tau=None, tau_sep=None, \
-                           optForAIC=False, lambdaMin=None, lambdaMax=None, calcAIC=False, lambda_=None, \
+                           optForAIC=False, lambdaMin=None, lambdaMax=None, calcAIC=False, lambda_=None, critType='ICL', \
                            adjustSubs=False, lambda_adjustSubs=None, adjustQuantiles=False, lambda_adjustQuant=None, \
                            Us_mult=None, canonical=False, updateGraph=True, printWarn=True):
         # k = degree of splines (only 0 and 1 are implemented), nKnots = number of inner knots, lambda_ = parameter of penalty, Us_mult = multiple U-vectors in form of a matrix,
@@ -244,6 +245,8 @@ class Estimator:
         m = Us_mult.shape[0]
         if np.all([optForAIC is False, calcAIC is True, True if (lambda_ is None) else np.all(np.isnan(lambda_))]):
             raise TypeError('information about penalization parameter lambda_ is required')
+        if (optForAIC or calcAIC) and (critType not in ['AIC', 'AICc', 'AICL1', 'AICL2', 'AICL2b', 'ICL']):
+            raise ValueError('criterion must be one of \'AIC\', \'AICc\', \'AICL1\', \'AICL2\', \'AICL2b\', \'ICL\'')
         if adjustSubs and adjustQuantiles:
             raise TypeError('only one type of adjustment should be used')
         if ((tau is None) and (tau_sep is None)):
@@ -270,23 +273,28 @@ class Estimator:
                 raise TypeError('number of split positions and specified number of segments do not match')
             freqVecSub = np.sum([np.diff(np.sum(Us <= splitPos.reshape(nSubs + 1, 1), axis=1)) for Us in Us_mult], axis=0)
             if adjustSubs:
-                splitPos_old = splitPos.copy()
-                if lambda_adjustSubs is None:
-                    lambda_adjustSubs = 1
-                propVec = lambda_adjustSubs * freqVecSub / (self.sortG.N * m) + (1 - lambda_adjustSubs) * np.diff(splitPos)
-                splitPos = np.cumsum(np.append([0], propVec))
-                Us_mult = [(((Us_mult - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, Us_mult) - 1]][0]
-                if updateGraph:
-                    self.sortG.update(Us_est=[(((self.sortG.Us_(self.sortG.sorting) - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0])
-                    # only Us_est should be changed; if self.sortG.sorting=='real'_or_'emp' the result will anyway be saved as Us_est
-                    if printWarn:
-                        warnings.warn('U\'s from input graph have been updated')
-                        print('UserWarning: U\'s from input graph have been updated')
+                if (nSubs < 2):
+                    warnings.warn('adjustment of segments can only be applied when there is more than one block')
+                    print('UserWarning: adjustment of segments can only be applied when there is more than one block')
                 else:
-                    self.Us = [(((self.sortG.Us_(self.sortG.sorting) - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0]
-                    if printWarn:
-                        warnings.warn('U\'s from input graph should be adjusted, use [].Us from this estimation object')
-                        print('UserWarning: U\'s from input graph should be adjusted, use [].Us from this estimation object')
+                    splitPos_old = splitPos.copy()
+                    if lambda_adjustSubs is None:
+                        lambda_adjustSubs = 1
+                    propVec = lambda_adjustSubs * freqVecSub / (self.sortG.N * m) + (1 - lambda_adjustSubs) * np.diff(splitPos)
+                    splitPos = np.cumsum(np.append([0], propVec))
+                    Us_mult = [(((Us_mult - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, Us_mult) - 1]][0]
+                    if updateGraph:
+                        self.sortG.update(Us_est=[(((self.sortG.Us_(self.sortG.sorting) - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0])
+                        # only Us_est should be changed; if self.sortG.sorting=='real'_or_'emp' the result will anyway be saved as Us_est
+                        self.graph_updated = True
+                        if printWarn:
+                            warnings.warn('U\'s from input graph have been updated')
+                            print('UserWarning: U\'s from input graph have been updated')
+                    else:
+                        self.Us = [(((self.sortG.Us_(self.sortG.sorting) - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0]
+                        if printWarn:
+                            warnings.warn('U\'s from input graph should be adjusted, use [].Us from this estimation object')
+                            print('UserWarning: U\'s from input graph should be adjusted, use [].Us from this estimation object')
             if np.isscalar(nKnots):
                 nKnots = divKnots(nKnots=nKnots, splitPos=splitPos)
             if not np.allclose([np.min(splitPos), np.max(splitPos), len(splitPos)], [0, 1, nSubs+1]):
@@ -356,28 +364,33 @@ class Estimator:
             nSubs = len(splitPos) -1
             freqVecSub = np.sum([np.diff(np.sum(Us <= splitPos.reshape(nSubs + 1, 1), axis=1)) for Us in Us_mult], axis=0)
             if adjustSubs:
-                splitPos_old = splitPos.copy()
-                if lambda_adjustSubs is None:
-                    lambda_adjustSubs = 1
-                propVec = lambda_adjustSubs * freqVecSub / (self.sortG.N * m) + (1 - lambda_adjustSubs) * np.diff(splitPos)
-                splitPos = np.cumsum(np.append([0], propVec))
-                tau_subNb = (np.ones((len(tau))) * (-1)).astype(int)
-                for i in range(nSubs):
-                    tau_subNb[np.logical_and(tau > splitPos_old[i], tau <= splitPos_old[i + 1])] = i
-                for i in range(nSubs):
-                    tau[tau_subNb == i] = (splitPos[i + 1] - splitPos[i]) * ((tau[tau_subNb == i] - splitPos_old[i]) / (splitPos_old[i + 1] - splitPos_old[i])) + splitPos[i]
-                tau_sep = [(splitPos[i + 1] - splitPos[i]) * ((tau_sep[i] - splitPos_old[i]) / (splitPos_old[i + 1] - splitPos_old[i])) + splitPos[i] for i in range(nSubs)]
-                Us_mult = [(((Us_mult - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, Us_mult) - 1]][0]
-                if updateGraph:
-                    self.sortG.update(Us_est=[(((self.sortG.Us_(self.sortG.sorting) - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0])
-                    if printWarn:
-                        warnings.warn('U\'s from input graph have been updated')
-                        print('UserWarning: U\'s from input graph have been updated')
+                if (nSubs < 2):
+                    warnings.warn('adjustment of segments can only be applied when there is more than one block')
+                    print('UserWarning: adjustment of segments can only be applied when there is more than one block')
                 else:
-                    self.Us = [(((self.sortG.Us_(self.sortG.sorting) - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0]
-                    if printWarn:
-                        warnings.warn('U\'s from input graph should be adjusted, use [].Us from this estimation object')
-                        print('UserWarning: U\'s from input graph should be adjusted, use [].Us from this estimation object')
+                    splitPos_old = splitPos.copy()
+                    if lambda_adjustSubs is None:
+                        lambda_adjustSubs = 1
+                    propVec = lambda_adjustSubs * freqVecSub / (self.sortG.N * m) + (1 - lambda_adjustSubs) * np.diff(splitPos)
+                    splitPos = np.cumsum(np.append([0], propVec))
+                    tau_subNb = (np.ones((len(tau))) * (-1)).astype(int)
+                    for i in range(nSubs):
+                        tau_subNb[np.logical_and(tau > splitPos_old[i], tau <= splitPos_old[i + 1])] = i
+                    for i in range(nSubs):
+                        tau[tau_subNb == i] = (splitPos[i + 1] - splitPos[i]) * ((tau[tau_subNb == i] - splitPos_old[i]) / (splitPos_old[i + 1] - splitPos_old[i])) + splitPos[i]
+                    tau_sep = [(splitPos[i + 1] - splitPos[i]) * ((tau_sep[i] - splitPos_old[i]) / (splitPos_old[i + 1] - splitPos_old[i])) + splitPos[i] for i in range(nSubs)]
+                    Us_mult = [(((Us_mult - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, Us_mult) - 1]][0]
+                    if updateGraph:
+                        self.sortG.update(Us_est=[(((self.sortG.Us_(self.sortG.sorting) - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0])
+                        self.graph_updated = True
+                        if printWarn:
+                            warnings.warn('U\'s from input graph have been updated')
+                            print('UserWarning: U\'s from input graph have been updated')
+                    else:
+                        self.Us = [(((self.sortG.Us_(self.sortG.sorting) - splitPos_old[subCom]) / np.diff(splitPos_old)[subCom]) * np.diff(splitPos)[subCom] + splitPos[subCom]) for subCom in [np.searchsorted(splitPos_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0]
+                        if printWarn:
+                            warnings.warn('U\'s from input graph should be adjusted, use [].Us from this estimation object')
+                            print('UserWarning: U\'s from input graph should be adjusted, use [].Us from this estimation object')
             nKnots = np.array([len(tau_sep_i[k:-k]) for tau_sep_i in tau_sep])
             if not np.all([nSubs == len(tau_sep), np.all(nKnots == np.array([(len(tau_sep_i) - 2*k) for tau_sep_i in tau_sep])), np.allclose(splitPos, np.append([tau_sep_i[k] for tau_sep_i in tau_sep], [1]))]):
                 raise TypeError('splitPos, nSubs, or nKnots are not specified in accordance with tau_sep; see\nsplitPos = np.array(' + np.array2string(splitPos, separator=', ').replace('\n ', ' \\\n\t') + ')' + \
@@ -400,6 +413,7 @@ class Estimator:
             if updateGraph:
                 self.sortG.update(Us_est=[(((self.sortG.Us_(self.sortG.sorting) - tau_old[subCom]) / np.diff(tau_old)[subCom]) * np.diff(tau)[subCom] + tau[subCom]) for subCom in [np.searchsorted(tau_old, self.sortG.Us_(self.sortG.sorting)) - 1]][0])
                 # only Us_est should be changed; if self.sortG.sorting=='real'_or_'emp' the result will anyway be saved as Us_est
+                self.graph_updated = True
                 if printWarn:
                     warnings.warn('U\'s from input graph have been updated')
                     print('UserWarning: U\'s from input graph have been updated')
@@ -415,7 +429,7 @@ class Estimator:
             nSpline1d = len(tau) - k - 1
             nSpline = nSpline1d**2
             if (optForAIC or calcAIC):
-                N_squ_eff = self.sortG.N ** 2 - self.sortG.N
+                N_squ_eff = np.logical_not(np.isnan(self.sortG.A)).sum() - np.logical_not(np.isnan(np.diagonal(self.sortG.A))).sum()
                 N_squ_eff_log = np.log(N_squ_eff)
             if k == 1:
                 B = np.array([np.array([interpolate.bisplev(x=np.sort(Us), y=np.sort(Us), tck=(tau, tau, np.lib.pad([1], (i, nSpline - i - 1), 'constant', constant_values=(0)), k, k), dx=0, dy=0) for i in np.arange(nSpline)])[:, np.argsort(np.argsort(Us)), :][:, :, np.argsort(np.argsort(Us))] for Us in Us_mult])
@@ -434,7 +448,7 @@ class Estimator:
                     NullMat[i, j], NullMat[j, i] = 1, -1
                     A2 = np.hstack((A2, NullMat.reshape(nSpline, 1)))
             A2 = A2.T
-            L_part = block_diag(*[np.vstack((np.identity(dim_i)[:-1] - np.hstack((np.zeros((dim_i - 1, 1)), np.identity(dim_i - 1))), np.zeros((1, dim_i)))) for dim_i in (nKnots +k -1)])[:-1]
+            L_part = block_diag(*[np.vstack((np.identity(dim_i)[:-1] - np.hstack((np.zeros((dim_i - 1, 1)), np.identity(dim_i - 1))))) for dim_i in (nKnots +k -1)])
             I_part = np.identity(nSpline1d)
             penalize = np.dot(np.kron(I_part, L_part).T, np.kron(I_part, L_part)) + np.dot(np.kron(L_part, I_part).T, np.kron(L_part, I_part))
             G_ = cvxopt.matrix(-A1)
@@ -447,7 +461,7 @@ class Estimator:
                 while (differ > 0.01**2):
                     Pi = np.minimum(np.maximum(np.sum(B.swapaxes(1, 3) * theta_t, axis=3), 1e-5), 1 - 1e-5)
                     mat1 = (B.swapaxes(0, 1) * ((self.sortG.A * (1 / Pi)) - ((1 - self.sortG.A) * (1 / (1 - Pi))))).swapaxes(0, 1)
-                    score = np.sum(np.sum(np.sum(mat1, axis=0), axis=1), axis=1) - np.sum(np.sum([np.diagonal(mat1[l], axis1=1, axis2=2).T for l in range(m)], axis=0), axis=0)
+                    score = np.sum(np.sum(np.nansum(mat1, axis=0), axis=1), axis=1) - np.sum(np.nansum([np.diagonal(mat1[l], axis1=1, axis2=2).T for l in range(m)], axis=0), axis=0)
                     mat2 = 1 / (Pi * (1 - Pi))
                     fisher = np.sum(np.array([np.dot(B_cbind[l] * np.delete(mat2[l].reshape(self.sortG.N ** 2, ), np.arange(self.sortG.N) * (self.sortG.N + 1)), B_cbind[l].T) for l in range(m)]), 0)
                     P_ = cvxopt.matrix(fisher + lambda_ * penalize)
@@ -484,7 +498,7 @@ class Estimator:
                     df_lambda_correct = df_lambda - nSubs ** 2
                     logProbMat = (self.sortG.A * np.log(Pi)) + ((1 - self.sortG.A) * np.log(1 - Pi))
                     [np.fill_diagonal(logProbMat_i, 0) for logProbMat_i in logProbMat]
-                    logLik = np.sum([np.sum(logProbMat_i) for logProbMat_i in logProbMat])
+                    logLik = np.sum([np.nansum(logProbMat_i) for logProbMat_i in logProbMat])
                     AIC = -2 * logLik + 2 * (df_lambda + (nSubs -1))
                     AICc = -2 * logLik + 2 * (df_lambda + (nSubs -1)) + ((2 * (df_lambda + (nSubs -1)) * ((df_lambda + (nSubs -1)) + 1)) / ((N_squ_eff * m) - (df_lambda + (nSubs -1)) - 1))
                     AICL1 = -2 * logLik + N_squ_eff_log * df_lambda + 2 * (nSubs -1)
@@ -497,7 +511,7 @@ class Estimator:
                     logProbMat = None  # !!!
                     logLik = None  # !!!
                     AIC, AICc, AICL1, AICL2, AICL2b, ICL = None, None, None, None, None, None
-                return(eval('(' + ('' if onlyAIC else 'Pi, mat2, fisher, logProbMat, logLik, df_lambda, df_lambda_correct, theta_t, AIC, AICc, AICL1, AICL2, AICL2b, ICL, "AICL2b", ') + 'AICL2b)'))
+                return(eval('(' + ('' if onlyAIC else 'Pi, mat2, fisher, logProbMat, logLik, df_lambda, df_lambda_correct, theta_t, AIC, AICc, AICL1, AICL2, AICL2b, ICL, ') + critType + ')'))
             if optForAIC:
                 lambdaMin = 0 if (lambdaMin is None) else lambdaMin
                 lambdaMax = 10000 if (lambdaMax is None) else lambdaMax
@@ -519,19 +533,19 @@ class Estimator:
             else:
                 AIC_opt_lamb_list = [[]]
                 AIC_opt_vals_list = [[]]
-            Pi_, mat2_, fisher_, logProbMat_, logLik_, df_lambda_, df_lambda_correct_, theta_t, AIC, AICc, AICL1, AICL2, AICL2b, ICL, optCrit, optValue = estTheta(lambda_)  # !!!
+            Pi_, mat2_, fisher_, logProbMat_, logLik_, df_lambda_, df_lambda_correct_, theta_t, AIC, AICc, AICL1, AICL2, AICL2b, ICL, critValue = estTheta(lambda_)  # !!!
             P_mat = theta_t.reshape(nSpline1d, nSpline1d)
             theta_sep_ext = None
             P_mat_sep_ext = None
             nodeInd_i_ = None  # !!!
             nodeInd_j_ = None  # !!!
             if not (optForAIC or calcAIC):
-                optCrit = None
+                critType = None
         else:
             nSpline1d = nKnots + k - 1
             nSpline = np.dot(nSpline1d[np.newaxis].T, nSpline1d[np.newaxis])
             nSpl1_cum = np.cumsum(np.append([0], nSpline1d))
-            N_squ_eff_log = np.log(self.sortG.N ** 2 - self.sortG.N)
+            N_squ_eff_log = np.log(np.logical_not(np.isnan(self.sortG.A)).sum() - np.logical_not(np.isnan(np.diagonal(self.sortG.A))).sum())
             if (np.isscalar(lambda_) or (lambda_ is None)):
                 lambda_ = np.full((nSubs, nSubs), np.nan if (lambda_ is None) else lambda_)
             if lambda_.shape != (nSubs, nSubs):
@@ -607,13 +621,13 @@ class Estimator:
                         A_ = cvxopt.matrix(A2) if (i_ == j_) else None
                         cvxopt.solvers.options['show_progress'] = False
                         def estTheta(lambda_, onlyAIC=False):
-                            theta_t_part = np.repeat(np.nansum([np.mean(A_reduc[i]) * A_reduc[i].size for i in range(m)]) / np.sum([A_reduc[i].size for i in range(m)]), nSpline[i_, j_])
+                            theta_t_part = np.repeat(np.nansum([np.nanmean(A_reduc[i]) * A_reduc[i].size for i in range(m)]) / np.sum([A_reduc[i].size for i in range(m)]), nSpline[i_, j_])
                             differ = 5
                             index_marker = 1
                             while (differ > 0.01**2):
                                 Pi = [np.minimum(np.maximum(np.sum(B[i].swapaxes(0, 2) * theta_t_part, axis=2).swapaxes(0, 1), 1e-5), 1 - 1e-5) for i in range(m)]
                                 mat1 = [B[i] * ((A_reduc[i] * (1 / Pi[i])) - ((1 - A_reduc[i]) * (1 / (1 - Pi[i])))) for i in range(m)]
-                                score = np.sum([np.sum(np.sum(mat1[i], axis=1), axis=1) for i in range(m)], axis=0) - (np.sum([np.sum(np.diagonal(mat1[l], axis1=1, axis2=2).T, axis=0) for l in range(m)], axis=0) if (i_ == j_) else 0)
+                                score = np.sum([np.sum(np.nansum(mat1[i], axis=1), axis=1) for i in range(m)], axis=0) - (np.sum([np.nansum(np.diagonal(mat1[l], axis1=1, axis2=2).T, axis=0) for l in range(m)], axis=0) if (i_ == j_) else 0)
                                 mat2 = [1 / (Pi[i] * (1 - Pi[i])) for i in range(m)]
                                 fisher = np.sum(np.array([np.dot(B_cbind[l] * np.delete(mat2[l].reshape(N_part_i[l] * N_part_j[l], ), (np.arange(N_part_i[l]) * (N_part_i[l] + 1)) if (i_ == j_) else []), B_cbind[l].T) for l in range(m)]), 0)
                                 P_ = cvxopt.matrix(fisher + lambda_ * penalize)
@@ -668,8 +682,8 @@ class Estimator:
                                 logProbMat = [(A_reduc[i] * np.log(Pi[i])) + ((1 - A_reduc[i]) * np.log(1 - Pi[i])) for i in range(m)]
                                 if i_ == j_:
                                     [np.fill_diagonal(logProbMat_i, 0) for logProbMat_i in logProbMat]
-                                logLik = np.sum([np.sum(logProbMat_i) for logProbMat_i in logProbMat])
-                                N_squ_eff_reduc = np.sum([(N_part_i[l] * N_part_j[l] - (N_part_i[l] if (i_ == j_) else 0)) for l in range(m)])
+                                logLik = np.sum([np.nansum(logProbMat_i) for logProbMat_i in logProbMat])
+                                N_squ_eff_reduc = np.sum([(np.logical_not(np.isnan(A_reduc[l])).sum() - np.logical_not(np.isnan(np.diagonal(A_reduc[l]))).sum()) for l in range(m)])
                                 AIC_part = -2 * logLik + 2 * df_lambda
                                 AICc_part = -2 * logLik + 2 * df_lambda + ((2 * df_lambda * (df_lambda + 1)) / (N_squ_eff_reduc - df_lambda - 1))  # wrong !!!
                                 AICL1_part = -2 * logLik + N_squ_eff_log * df_lambda
@@ -682,7 +696,7 @@ class Estimator:
                                 logProbMat = None  # !!!
                                 logLik = 0  # !!!
                                 AIC_part, AICc_part, AICL1_part, AICL2_part, AICL2b_part, ICL_part = 0, 0, 0, 0, 0, 0
-                            return(eval('(' + ('' if onlyAIC else 'Pi, mat2, fisher, logProbMat, logLik, df_lambda, df_lambda_correct, theta_t_part, AIC_part, AICc_part, AICL1_part, AICL2_part, AICL2b_part, ICL_part, "AICL2b", ') + 'AICL2b_part)'))
+                            return(eval('(' + ('' if onlyAIC else 'Pi, mat2, fisher, logProbMat, logLik, df_lambda, df_lambda_correct, theta_t_part, AIC_part, AICc_part, AICL1_part, AICL2_part, AICL2b_part, ICL_part, ') + critType + '_part)'))
                         if optForAIC:
                             lambdaMin = 0 if (lambdaMin is None) else lambdaMin
                             lambdaMax = 10000 if (lambdaMax is None) else lambdaMax
@@ -701,7 +715,7 @@ class Estimator:
                             AIC_opt_vals = np.array([str_ii[str_ii != ''][2].astype(float) for str_i in np.array(output_.split('\n'))[np.in1d(np.array([words_i[np.argmax((np.array(words_i) != ''))] for words_i in [row_i.split(' ') for row_i in output_.split('\n')]]), np.arange(1, maxfun + 1).astype(str))] for str_ii in [np.array(str_i.split(' '))]])
                             AIC_opt_lamb_list[-1].append(AIC_opt_lamb[np.argsort(AIC_opt_lamb)])
                             AIC_opt_vals_list[-1].append(AIC_opt_vals[np.argsort(AIC_opt_lamb)])
-                        Pi_part, mat2_part, fisher_part, logProbMat_part, logLik_part, df_lambda_part, df_lambda_correct_part, theta_t_part, AIC_part, AICc_part, AICL1_part, AICL2_part, AICL2b_part, ICL_part, optCrit, optValue_part = estTheta(lambda_[i_,j_])  # !!!
+                        Pi_part, mat2_part, fisher_part, logProbMat_part, logLik_part, df_lambda_part, df_lambda_correct_part, theta_t_part, AIC_part, AICc_part, AICL1_part, AICL2_part, AICL2b_part, ICL_part, critValue_part = estTheta(lambda_[i_,j_])  # !!!
                         Pi_.append(Pi_part)  # !!!
                         mat2_.append(mat2_part)  # !!!
                         fisher_.append(fisher_part)  # !!!
@@ -735,9 +749,9 @@ class Estimator:
                 AICL2 += np.log(self.sortG.N) * (nSubs - 1)
                 AICL2b += N_squ_eff_log * nSubs ** 2 + np.log(self.sortG.N) * (nSubs - 1)
                 ICL += (1/2) * ((nSubs -1) * np.log(self.sortG.N))
-                optValue = eval(optCrit)
+                critValue = eval(critType)
             else:
-                AIC, AICc, AICL1, AICL2, AICL2b, ICL, optCrit, optValue = None, None, None, None, None, None, None, None
+                AIC, AICc, AICL1, AICL2, AICL2b, ICL, critType, critValue = None, None, None, None, None, None, None, None
             theta_t = P_mat.reshape(nSpl1_cum[-1]**2)
         tau_sep_ext = [np.concatenate((np.repeat(-0.1, k + 1), tau_sep[i], np.repeat(1.1, k + 1))) for i in range(nSubs)]
         tau_new, tau_sep_ext_new = copy(tau), copy(tau_sep_ext)
@@ -782,8 +796,8 @@ class Estimator:
         self.graphonEst.AICL2 = AICL2
         self.graphonEst.AICL2b = AICL2b
         self.graphonEst.ICL = ICL
-        self.graphonEst.optCrit = optCrit
-        self.graphonEst.optValue = optValue
+        self.graphonEst.critType = critType
+        self.graphonEst.critValue = critValue
         self.graphonEst.AIC_opt_lamb_list = AIC_opt_lamb_list
         self.graphonEst.AIC_opt_vals_list = AIC_opt_vals_list
         self.graphonEst.freqUsSub = freqVecSub

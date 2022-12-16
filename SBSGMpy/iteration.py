@@ -32,7 +32,7 @@ def showOptForAIC(AIC_opt_lamb_list,AIC_opt_vals_list,m,make_show=True,savefig=F
 
 
 def iterateEM(sortG,
-              k, nSubs, nKnots, useOneBasis, canonical, est_initSplitPos, adjustSubs, adjustQuantiles,
+              k, nSubs, nKnots, useOneBasis, critType, canonical, est_initSplitPos, adjustSubs, adjustQuantiles,
               n_steps, proposal, sigma_prop, use_origFct, averageType, use_stdVals,
               n_iter, rep_start, rep_end, it_rep_grow, rep_forPost,
               lambda_start, lambda_skip1, lambda_lim1, lambda_skip2, lambda_lim2, lambda_last_m,
@@ -49,7 +49,7 @@ def iterateEM(sortG,
     AIC_vec = np.array([])
     if not startWithEst:
         n_iter = n_iter+1
-    # EM based algorithm
+    ### EM based algorithm
     for index in range(1,n_iter+1):
         labNb = index + raiseLabNb
         ## global phases:
@@ -70,16 +70,23 @@ def iterateEM(sortG,
             sample.updateGraph(use_stdVals =use_stdVals)
             if makePlots:
                 sortG.showAdjMat(make_show=make_show, savefig=savefig, file_=dir_ + 'adjMat_' + (labNb-1).__str__() + '.png')
-                if hasattr(estGraphon, 'splitPos'):
-                    splitPos1 = copy(estGraphon.splitPos)
-                else:
-                    splitPos1 = None
+                if not (make_show or savefig):
+                    plt.clf()
+                splitPos1 = copy(estGraphon.splitPos) if hasattr(estGraphon, 'splitPos') else None
                 sortG.showNet(splitPos=splitPos1, make_show=make_show, savefig=savefig, file_=dir_ + 'network_' + (labNb-1).__str__() + '.png')
+                if not (make_show or savefig):
+                    plt.clf()
                 if simulate:
                     sortG.showDiff(Us_type='est', EMstep_sign='(' + (labNb-1).__str__() + ')', make_show=make_show, savefig=savefig, file_=dir_ + 'Us_diffReal_' + (labNb-1).__str__() + '.png')
+                    if not (make_show or savefig):
+                        plt.clf()
                 if adjustSubs or adjustQuantiles:
                     sortG.showUsCDF('est', make_show=make_show, savefig=savefig, file_=dir_ + 'Us_cdf_' + labNb.__str__() + '.png')
+                    if not (make_show or savefig):
+                        plt.clf()
                     sortG.showUsHist(bins=((sortG.N/20) if (adjustQuantiles or (splitPos1 is None)) else splitPos1), make_show=make_show, savefig=savefig, file_=dir_ + 'Us_hist_' + labNb.__str__() + '.png')
+                    if not (make_show or savefig):
+                        plt.clf()
         ### Estimate Graphon
         if (glob_NotPhase1 or startWithEst):  # (index > 1)
             print('Estimation')
@@ -96,9 +103,9 @@ def iterateEM(sortG,
                     tau = copy(estGraphon.tau) if hasattr(estGraphon, 'tau') else None
                     tau_sep = None
                     splitPos = None
-                    nKnots = copy(estGraphon.nKnots) if hasattr(estGraphon, 'nKnots') else None
+                    nKnots = copy(estGraphon.nKnots) if hasattr(estGraphon, 'nKnots') else nKnots
                 else:
-                # note: 'else' means adjustSubs=adjustQuantiles=False since adjustSubs=adjustQuantiles=True is excluded through Estimator.GraphonEstBySpline
+                ## note: 'else' means adjustSubs=adjustQuantiles=False since adjustSubs=adjustQuantiles=True is excluded through Estimator.GraphonEstBySpline
                     if useOneBasis:
                         tau = copy(estGraphon.tau) if hasattr(estGraphon, 'tau') else None
                         tau_sep = None
@@ -106,14 +113,14 @@ def iterateEM(sortG,
                         tau = None
                         tau_sep = copy(estGraphon.tau_sep) if hasattr(estGraphon, 'tau_sep') else None
                     splitPos = copy(estGraphon.splitPos) if hasattr(estGraphon, 'splitPos') else None
-                    nKnots = copy(estGraphon.nKnots) if hasattr(estGraphon, 'nKnots') else None
+                    nKnots = copy(estGraphon.nKnots) if hasattr(estGraphon, 'nKnots') else nKnots
             if lmd_phase1:  # (index <= lambda_skip1)
                 if ((index % 2) != 0):
                     lambda_ = (1 - (1 - (((index - 1) / (lambda_skip1 - 1)) if (lambda_skip1 > 1) else 1.))**2) * (lambda_start - 1) + 1
                     sigma_prop_ = sigma_prop * .5
                     gamma = .75
                 else:
-                    lambda_ = (1 - (((index - 2) / (lambda_skip1 - 2)) if (lambda_skip1 > 2) else 1.))**2 * (np.max([50000, lambda_start*5]) - lambda_start) + lambda_start
+                    lambda_ = (1 - (((index - 2) / (lambda_skip1 - 2)) if (lambda_skip1 > 2) else 1.))**2 * (np.max([5000, lambda_start*5]) - lambda_start) + lambda_start
                     sigma_prop_ = sigma_prop * 2
                     gamma = .25
             else:
@@ -124,22 +131,23 @@ def iterateEM(sortG,
                 sigma_prop_ = sigma_prop * .5
                 gamma = .75
             optForAIC = np.any([lmd_phase2, lmd_phase4a, lmd_phase6])
-            if adjustSubs or adjustQuantiles:
-                lambda_adjustSubs = lambda_adjustQuant = index / n_iter
+            lambda_adjustSubs = lambda_adjustQuant = (index / n_iter) if (adjustSubs or adjustQuantiles) else None
             Us_mult = None
             estGraphonData=Estimator(sortG=sortG)
             estGraphon=estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs, nKnots=nKnots, splitPos=splitPos, est_splitPos=est_initSplitPos, useOneBasis=useOneBasis, tau=tau, tau_sep=tau_sep,
-                                                         optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_),
+                                                         optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
                                                          adjustSubs=adjustSubs, lambda_adjustSubs=lambda_adjustSubs, adjustQuantiles=adjustQuantiles, lambda_adjustQuant=lambda_adjustQuant,
                                                          Us_mult=Us_mult, canonical=canonical, updateGraph=True, printWarn=False)
             if makePlots:
                 estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + labNb.__str__() + '.png')
+                if not (make_show or savefig):
+                    plt.clf()
             ## force the algorithm to keep the given number of communities
             if np.any(estGraphon.freqUsSub == 0):
                 emptyGr = (estGraphon.freqUsSub == 0)
                 warnings.warn('[result nb ' + labNb.__str__() + '] empty communit' + (('y ' + (np.where(emptyGr)[0][0]+1).__str__() + ' has') if (emptyGr.sum() == 1) else ('ies ' + ', '.join((np.where(emptyGr)[0]+1).astype(str)) + ' have')) + ' been removed')
                 print('UserWarning: [result nb ' + labNb.__str__() + '] empty communit' + (('y ' + (np.where(emptyGr)[0][0]+1).__str__() + ' has') if (emptyGr.sum() == 1) else ('ies ' + ', '.join((np.where(emptyGr)[0]+1).astype(str)) + ' have')) + ' been removed')
-                us_ = np.concatenate([np.linspace(estGraphon.splitPos[i],estGraphon.splitPos[i+1], int(np.round(sortG.N*((estGraphon.splitPos[i+1]-estGraphon.splitPos[i])/(1-sizeOff)))) +2)[1:-1] for sizeOff in [np.sum([(estGraphon.splitPos[i+1]-estGraphon.splitPos[i]) for i in range(estGraphon.nSubs) if emptyGr[i]])] for i in range(estGraphon.nSubs) if (not emptyGr[i])])
+                us_ = np.concatenate([np.linspace(estGraphon.splitPos[i],estGraphon.splitPos[i+1], int(np.round(estGraphonData.sortG.N*((estGraphon.splitPos[i+1]-estGraphon.splitPos[i])/(1-sizeOff)))) +2)[1:-1] for sizeOff in [np.sum([(estGraphon.splitPos[i+1]-estGraphon.splitPos[i]) for i in range(estGraphon.nSubs) if emptyGr[i]])] for i in range(estGraphon.nSubs) if (not emptyGr[i])])
                 vs_list = [(tau_sep_i[k:-k] + np.concatenate(([1e-5],np.repeat(0,len(tau_sep_i[k:-k])-2),[-1e-5]))) for tau_sep_i in np.array(estGraphon.tau_sep)[np.logical_not(emptyGr)]]
                 lenVs = np.array([len(vs_list_i) for vs_list_i in vs_list])
                 vs_ = np.concatenate(vs_list)
@@ -154,11 +162,13 @@ def iterateEM(sortG,
                     print('UserWarning: manually adapted knot positions have been discarded')
                 print(estGraphon.splitPos, newSplitPos)  # !!!
                 estGraphon=estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs, nKnots=nKnots, splitPos=newSplitPos, est_splitPos=False, useOneBasis=useOneBasis, tau=None, tau_sep=None,
-                                                             optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_),
+                                                             optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
                                                              adjustSubs=adjustSubs, lambda_adjustSubs=lambda_adjustSubs, adjustQuantiles=adjustQuantiles, lambda_adjustQuant=lambda_adjustQuant,
                                                              Us_mult=Us_mult, canonical=canonical, updateGraph=True, printWarn=False)
                 if makePlots:
                     estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + labNb.__str__() + '_newSplit.png')
+                    if not (make_show or savefig):
+                        plt.clf()
             ## remove marginalized segments [should not occur when a certain number of communities is forced, except in the last iteration]
             if np.any([np.allclose(tau_sep_i, tau_sep_i[k]) for tau_sep_i in estGraphon.tau_sep]):
                 emptySub = np.array([np.allclose(tau_sep_i, tau_sep_i[k]) for tau_sep_i in estGraphon.tau_sep])
@@ -168,11 +178,13 @@ def iterateEM(sortG,
                 tau_new = np.concatenate([tau_sep_new[i][(0 if (i == 0) else (k + 1)):] for i in range(len(tau_sep_new))])
                 nKnots_new = estGraphon.nKnots[np.logical_not(emptySub)]
                 estGraphon = estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs -emptySub.sum(), nKnots=nKnots_new, splitPos=None, est_splitPos=False, useOneBasis=useOneBasis, tau=tau_new, tau_sep=tau_sep_new,
-                                                               optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_),
+                                                               optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
                                                                adjustSubs=adjustSubs, lambda_adjustSubs=lambda_adjustSubs, adjustQuantiles=adjustQuantiles, lambda_adjustQuant=lambda_adjustQuant,
                                                                Us_mult=Us_mult, canonical=canonical, updateGraph=True, printWarn=False)
                 if makePlots:
                     estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + labNb.__str__() + '_remSub.png')
+                    if not (make_show or savefig):
+                        plt.clf()
                 if not (lambdas_ is None):
                     lambdas_ = np.array([lambda_i[np.logical_not(emptySub)][:,np.logical_not(emptySub)] for lambda_i in lambdas_])
                 if not (lambdaList is None):
@@ -194,21 +206,26 @@ def iterateEM(sortG,
         if returnGraphonList:
             estGraphonList.append(estGraphon)
         trajMat = np.append(trajMat, estGraphon.fct(np.arange(1, n_eval+1) / (n_eval+1), np.arange(1, n_eval+1) / (n_eval+1)).reshape(1, n_eval, n_eval), axis=0)
-        AIC_vec = np.append(AIC_vec, [estGraphon.optValue])
+        AIC_vec = np.append(AIC_vec, [estGraphon.critValue])
         if optForAIC:
             if makePlots:
                 showOptForAIC(AIC_opt_lamb_list=estGraphon.AIC_opt_lamb_list, AIC_opt_vals_list=estGraphon.AIC_opt_vals_list, m=index, make_show=make_show, savefig=savefig, file_=dir_ + 'AIC_OptProfile')
+                if not (make_show or savefig):
+                    plt.clf()
         ### Sample U's
         if (index < n_iter) or (endWithSamp and (rep_forPost > 0)):
             print('Sampling')
             rep = rep_start if (index < it_rep_grow) else (int(np.round((rep_start**(n_iter-it_rep_grow) / rep_end)**(1/(n_iter-it_rep_grow-1)) * np.exp(np.log(rep_start / (rep_start**(n_iter-it_rep_grow) / rep_end)**(1/(n_iter-it_rep_grow-1))) * (index-it_rep_grow+1)))) if (index < n_iter) else (rep_forPost))
             sample=Sample(sortG=sortG,graphon=estGraphon,use_origFct=use_origFct)
-            sample.gibbs(steps=n_steps,proposal=proposal,rep=rep,sigma_prop=sigma_prop_,gamma=gamma,splitPos=None,returnAllGibbs=returnAllGibbs,averageType=averageType,updateGraph=False,use_stdVals =None,printWarn=False)
+            sample.gibbs(steps=n_steps,rep=rep,proposal=proposal,sigma_prop=sigma_prop_,gamma=gamma,splitPos=None,averageType=averageType,returnAllGibbs=returnAllGibbs,updateGraph=False,use_stdVals =None,printWarn=False)
             if makePlots:
                 sample.showMove(useColor=True if simulate else False, EMstep_sign=labNb, make_show=make_show, savefig=savefig, file_=dir_ + 'Us_move_' + labNb.__str__() + '.png')
+                if not (make_show or savefig):
+                    plt.clf()
                 if simulate:
-                    ## differences to real U's is no illustrated based on sortG.showDiff()
                     sample.showMove(Us_type='real', useAllGibbs=True, EMstep_sign=labNb, make_show=make_show, savefig=savefig, file_=dir_ + 'UsMCMC_diffReal_' + labNb.__str__() + '.png')
+                    if not (make_show or savefig):
+                        plt.clf()
             if returnSampList:
                 sampleList.append(sample)
             ## update graph is now included in Sample()
@@ -278,7 +295,10 @@ def showLambda(lambdaList,make_show=True,savefig=False,file_=None):
     if make_show:
         plt.show()
     if savefig:
-        plt.savefig(file_, bbox_extra_artists=(legend1,), bbox_inches='tight')
+        if logicalSmooth:
+            plt.savefig(file_)
+        else:
+            plt.savefig(file_, bbox_extra_artists=(legend1,), bbox_inches='tight')
         plt.close(plt.gcf())
     else:
         if logicalSmooth:

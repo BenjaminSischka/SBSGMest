@@ -61,7 +61,7 @@ def create_data(data_):
         nx.write_gml(G=G_new, path=os.path.realpath('../Data/polblogs') + '/polblogs2-new.gml')
 
 
-def GraphFromData(data_, estMethod = None, dir_ = os.path.realpath('..'), addLabels = True, since1992 = False):
+def GraphFromData(data_, estMethod = None, dir_ = os.path.realpath('..'), addLabels = True):
     Us_real = None
     node_labels = None
     ##### Karate
@@ -124,8 +124,23 @@ def GraphFromData(data_, estMethod = None, dir_ = os.path.realpath('..'), addLab
         ## an edge means there is at least one connection between two airports in one direction (!)
         adjMat = nx.to_numpy_array(nx.read_edgelist(os.path.join(dir_, 'Data/routes_aircraft') + '/routes.edgelist', delimiter=",", nodetype=int))
     ##### Military Alliances
-    if data_ == 'alliances':
-        if since1992:
+    if data_.startswith('alliances'):
+        label_ = data_.split('alliances')[1]
+        if label_ == '':
+            adjMat = np.zeros((0, 257)).astype('int')
+            with open(os.path.join(dir_, 'Data/alliances') + '/alliances_strong_post_adjMat_2016.csv') as f_cont:
+                reader = csv.reader(f_cont)
+                node_labels = next(reader)[1:]
+                for line in reader:
+                    adjMat = np.append(adjMat, [[int(int_i) for int_i in line[1:]]], axis=0)
+            margSum_pos = (adjMat.sum(axis=0) > 0)
+            adjMat = adjMat[margSum_pos][:, margSum_pos]
+            node_labels = np.array(node_labels)[margSum_pos]
+            # remove isolated groups and single connected nodes
+            all_other = np.logical_not(np.in1d(node_labels, ['China', 'Cuba', 'North Korea', 'Bosnia and Herzegovina', 'Syria']))
+            adjMat = adjMat[all_other][:, all_other]
+            node_labels = node_labels[all_other]
+        elif label_ == '1992':
             file_cont = open(os.path.join(dir_, 'Data/alliances') + '/country_list.csv', "r")
             reader = csv.reader(file_cont)
             header1 = next(reader)
@@ -147,19 +162,7 @@ def GraphFromData(data_, estMethod = None, dir_ = os.path.realpath('..'), addLab
             adjMat = nx.to_numpy_array(G_nx1)
             node_labels = np.array([country_info[country_info[:, 0].astype('int') == list(G_nx1.nodes)[i], np.array([2 ,3 ,1])] for i in range(G_nx1.order())])
         else:
-            adjMat = np.zeros((0, 257)).astype('int')
-            with open(os.path.join(dir_, 'Data/alliances') + '/alliances_strong_post_adjMat_2016.csv') as f_cont:
-                reader = csv.reader(f_cont)
-                node_labels = next(reader)[1:]
-                for line in reader:
-                    adjMat = np.append(adjMat, [[int(int_i) for int_i in line[1:]]], axis=0)
-            margSum_pos = (adjMat.sum(axis=0) > 0)
-            adjMat = adjMat[margSum_pos][:, margSum_pos]
-            node_labels = np.array(node_labels)[margSum_pos]
-            # remove isolated groups and single connected nodes
-            all_other = np.logical_not(np.in1d(node_labels, ['China', 'Cuba', 'North Korea', 'Bosnia and Herzegovina', 'Syria']))
-            adjMat = adjMat[all_other][:, all_other]
-            node_labels = node_labels[all_other]
+            raise ValueError('there exists no dataset for alliances since \'' + str(label_) + '\'')
     #####
-    return(ExtGraph(A = adjMat, Us_real=Us_real, estMethod=estMethod, labels=node_labels if addLabels else None))
+    return(ExtGraph(A = adjMat, labels=node_labels if addLabels else None, Us_real=Us_real, estMethod=estMethod))
 

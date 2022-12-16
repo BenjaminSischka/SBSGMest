@@ -135,7 +135,7 @@ class Graphon:
         if vmax is None:
             vmax = np.nanmax(self_mat)
         ## define color for nan values -> light grey
-        cmap_ = plt.get_cmap(colorMap)
+        cmap_ = copy(plt.get_cmap(colorMap))
         cmap_.set_bad(color=plt.get_cmap('binary')(0.2))
         plotGraphon = ax.matshow(self_mat + vmin_diff, cmap=cmap_, interpolation='none', norm=LogNorm(vmin=vmin + vmin_diff, vmax=vmax + vmin_diff)) if log_scale else \
         ax.matshow(self_mat, cmap=cmap_, interpolation='none', vmin=vmin, vmax=vmax)
@@ -154,8 +154,8 @@ class Graphon:
                 cbar = None
         if showSplitPos:  # only possible if graphon has been specified as B-spline function - e.g. see byBSpline
             try:
-                [ax.axvline(x=x_, color='k', linestyle=linestyle) for x_ in (self.splitPos[1:-1] * self_mat.shape[1] - 0.5)]
-                [ax.axhline(y=y_, color='k', linestyle=linestyle) for y_ in (self.splitPos[1:-1] * self_mat.shape[0] - 0.5)]
+                lines1 = [ax.axvline(x=x_, color='k', linestyle=linestyle) for x_ in (self.splitPos[1:-1] * self_mat.shape[1] - 0.5)]
+                lines2 = [ax.axhline(y=y_, color='k', linestyle=linestyle) for y_ in (self.splitPos[1:-1] * self_mat.shape[0] - 0.5)]
             except AttributeError:
                 warnings.warn('no information about the split positions - graphon has to be specified as hierarchical B-spline function')
                 print('UserWarning: no information about the split positions - graphon has to be specified as hierarchical B-spline function')
@@ -165,7 +165,7 @@ class Graphon:
             plt.savefig(file_)
             plt.close(plt.gcf())
         else:
-            return(eval('plotGraphon' + (', cbar' if showColorBar else '')))
+            return(eval('plotGraphon' + (', cbar' if showColorBar else '') + (', lines1, lines2' if showSplitPos else '')))
     def showSlices(self, vmin=None, vmax=None, vmin_=0.01, log_scale=False, showColorBar=True, lineAttr = {'linewidth': 3, 'alpha': 0.7}, colorMap = 'jet', fig_ax=None, make_show=True, savefig=False, file_=None, figsize_=None):
         if (self.mat.min() < 0) or (self.mat.max() > 1):
             warnings.warn('graphon has bad values, correction has been applied -> codomain: [0,1]')
@@ -173,6 +173,7 @@ class Graphon:
         self_mat = np.minimum(np.maximum(self.mat,0),1)
         if fig_ax is None:
             fig, ax = plt.subplots(figsize = figsize_)
+            ax = plt.subplot(111)
         else:
             fig, ax = fig_ax
         if vmin is None:
@@ -199,7 +200,6 @@ class Graphon:
             cmap = LinearSegmentedColormap.from_list('my_colormap', cmap_vals)
         else:
             cmap = plt.get_cmap(colorMap)
-        ax = plt.subplot(111)
         if log_scale:
             self_mat = np.log10(self_mat + vmin_diff)
         plotSlices = [ax.plot(vs_, self_mat[i], color=cmap(us_[i]), linewidth=lineAttr['linewidth'], alpha=lineAttr['alpha']) for i in range(self_mat.shape[0])]
@@ -317,15 +317,9 @@ def byExID2(idX,size=101):
                 11: {'fct': lambda u,v: np.minimum(u,v)*((1/2)*(u+v)) + np.maximum(u,v)*(1-((1/2)*(u+v)))},
                 12: {'fct': lambda u,v: ((((u**2)+(v**2))/2)**(1/2))},
                 13: {'fct': lambda u,v: (1-((((1-u)**2)+((1-v)**2))/2)**(1/2))*((1/2)*(u+v)) + ((((u**2)+(v**2))/2)**(1/2))*(1-((1/2)*(u+v)))},
-                14: {'fct': lambda u,v: ((np.asarray(v) * np.ones(1))+(np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1)) * np.logical_and(v < 1/2, (np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1) < 1/2) + ((np.asarray(v) * np.ones(1))+(np.asarray(u-1) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1)) * np.logical_and(v >= 1/2, (np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1) >= 1/2)},
-                15: {'fct': lambda u,v: ((4/3) * u + (2/3) * v) if (v < 1/2 and u < 1/2) else(0 if ((v < 1/2 and u >= 1/2) or (v >= 1/2 and u < 1/2)) else ((2/3) * u + (4/3) * v - 1))},
-                1502: {'fct': lambda u,v: np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) <= 0.5), fctToFct(lambda u_,v_: (4/3) * u_[:, np.newaxis] + (2/3) * v_[np.newaxis, :])(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) <= 0.5)))[()] + \
-                                  np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) <= 0.5), fctToFct(lambda u_,v_: np.zeros((u_.size,v_.size)))(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) > 0.5)))[()] + \
-                                  np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) > 0.5), fctToFct(lambda u_,v_: np.zeros((u_.size,v_.size)))(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) <= 0.5)))[()] + \
-                                  np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) > 0.5), fctToFct(lambda u_,v_: (2/3) * u_[:, np.newaxis] + (4/3) * v_[np.newaxis, :] - 1)(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) > 0.5)))[()]},
                 16: {'fct': lambda u,v: (1 / (np.sqrt(2*np.pi) * 0.5)) * np.exp((-1/2) * (((u-0.5)**2 + (v-0.5)**2) / 0.5**2)) * (1/0.9)},
                 17: {'fct': lambda u,v: ((np.log(u*v + 1) * (1/np.log(2))) + (((0.5)**(1/8) - (np.abs(u*v - 0.5)**(1/2))) * (1/((0.5)**(1/8)))) + ((u * v)**3) + ((1 / (u+v+0.01)**2) * (1/10000)) + (np.sqrt(1 / (u+v+0.01)) * (1/10))) * (1/5)},
-                18: {'fct': lambda u,v: 14* (u*v)**3 - 20.5* (u*v)**2 + 7.5* (u*v)},
+                18: {'fct': lambda u,v: matToFct(np.minimum(np.maximum(fctToMat(fct = lambda u_,v_: 14* (u_*v_)**3 - 20.5* (u_*v_)**2 + 7.5* (u_*v_), size=501), 0), 1))(u,v)},
                 19: {'fct': lambda u,v: (1/ (np.maximum(1- (u**2 + v**2)**(1/2), 0)**5 + np.maximum(1- ((1-u)**2 + v**2)**(1/2), 0)**5 + np.maximum(1- (u**2 + (1-v)**2)**(1/2), 0)**5 + np.maximum(1- ((1-u)**2 + (1-v)**2)**(1/2), 0)**5)) * \
                         (np.maximum(1- (u**2 + v**2)**(1/2), 0)**5 *0.8 + (np.maximum(1- ((1-u)**2 + v**2)**(1/2), 0)**5 + np.maximum(1- (u**2 + (1-v)**2)**(1/2), 0)**5) *0.2 + np.maximum(1- ((1-u)**2 + (1-v)**2)**(1/2), 0)**5 *0.85)},
                 20: {'fct': lambda u,v: (1/ (np.maximum(1- (u**2 + v**2)**(1/2), 0)**3 + np.maximum(1- ((1-u)**2 + v**2)**(1/2), 0)**3 + np.maximum(1- (u**2 + (1-v)**2)**(1/2), 0)**3 + np.maximum(1- ((1-u)**2 + (1-v)**2)**(1/2), 0)**3)) * \
@@ -348,7 +342,7 @@ def byExID2(idX,size=101):
                 #from Y. Zhang 2016
                 51: {'fct': lambda u,v: np.sin(5 * np.pi *(u+v-1) +1) /2 + 0.5},
                 52: {'fct': lambda u,v: 1 -(1 + np.exp(15 *(0.8 * np.abs(u-v))**(4/5) -0.1))**(-1)},
-                53: {'fct': lambda u,v: (u**2 + v**2)/3 * np.cos(1 / (u**2 + v**2)) + 0.15},
+                53: {'fct': lambda u,v: np.maximum((u**2 + v**2), 1e-10)/3 * np.cos(1 / (np.maximum((u**2 + v**2), 1e-10))) + 0.15},
                 #discrete functions
                 101: {'fct': lambda u,v: (0.2 if u < 2/3 else 0.8) if v < 2/3 else (0.8 if u < 2/3 else 0.2), 'splitPos': np.array([0,2/3,1])},
                 102: {'fct': lambda u,v: (0.8 if u < 1/2 else 0.2) if v < 1/2 else (0.2 if u < 1/2 else 0.8), 'splitPos': np.array([0,.5,1])},
@@ -361,6 +355,12 @@ def byExID2(idX,size=101):
                 109: {'fct': lambda u,v: (0.4 if u < 1/2 else (0.6 if u < 2/3 else 0.9)) if v < 1/2 else ((0.6 if u < 1/2 else \
                         (0.4 if u < 2/3 else 0.7)) if v < 2/3 else (0.9 if u < 1/2 else (0.7 if u < 2/3 else 0.1))), 'splitPos': np.array([0,1/2,2/3,1])},
                 #mixture models
+                14: {'fct': lambda u,v: ((np.asarray(v) * np.ones(1))+(np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1)) * np.logical_and(v < 1/2, (np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1) < 1/2) + ((np.asarray(v) * np.ones(1))+(np.asarray(u-1) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1)) * np.logical_and(v >= 1/2, (np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1) >= 1/2)},
+                15: {'fct': lambda u,v: ((4/3) * u + (2/3) * v) if (v < 1/2 and u < 1/2) else(0 if ((v < 1/2 and u >= 1/2) or (v >= 1/2 and u < 1/2)) else ((2/3) * u + (4/3) * v - 1))},
+                1502: {'fct': lambda u,v: np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) <= 0.5), fctToFct(lambda u_,v_: (4/3) * u_[:, np.newaxis] + (2/3) * v_[np.newaxis, :])(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) <= 0.5)))[()] + \
+                                  np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) <= 0.5), fctToFct(lambda u_,v_: np.zeros((u_.size,v_.size)))(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) > 0.5)))[()] + \
+                                  np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) > 0.5), fctToFct(lambda u_,v_: np.zeros((u_.size,v_.size)))(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) <= 0.5)))[()] + \
+                                  np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) > 0.5), fctToFct(lambda u_,v_: (2/3) * u_[:, np.newaxis] + (4/3) * v_[np.newaxis, :] - 1)(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) > 0.5)))[()]},
                 201: {'fct': lambda u, v: ((np.sqrt(u * v) * 2) if (u <= 0.5 and v <= 0.5) else ((v * 0.3) if (u > 0.5 and v <= 0.5) else ((u * 0.3) if (u <= 0.5 and v > 0.5) else (np.sqrt((u - 1 / 2) * (v - 1 / 2)) * 2)))), 'splitPos': np.array([0,1/2,1])},
                 202: {'fct': lambda u, v: ((np.sqrt(u * v) * 1) if (u <= 0.5 and v <= 0.5) else ((((u - 0.5) * v) * 1) if (u > 0.5 and v <= 0.5) else ((((v - 0.5) * u) * 1) if (u <= 0.5 and v > 0.5) else (np.sqrt((u - 1 / 2) * (v - 1 / 2)) * 1)))), 'splitPos': np.array([0,.5,1])},
                 203: {'fct': lambda u,v: np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) <= 0.5), fctToFct(lambda u_,v_: (u_+0.5)*(v_+0.5))(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) <= 0.5)))[()] + \
@@ -453,6 +453,7 @@ def byExID3(idX,size=101):
                  51: {'u_lim': np.linspace(0,1,11), 'wMat': np.array([[(i+j)/(2*10) for j in range(1,11)] for i in range(1,11)])},
                 }
     u_lim = structure[idX]['u_lim']
+    u_lim[np.argmin(u_lim)], u_lim[np.argmax(u_lim)] = -1e-5, 1 + 1e-5
     wMat = structure[idX]['wMat']
     GraphonSpeci = Graphon(fct=lambda u,v: np.squeeze(np.atleast_2d(wMat[np.searchsorted(u_lim, u) - 1, :])[:, np.searchsorted(u_lim, v) - 1])*1,size=size)
     GraphonSpeci.u_lim = u_lim

@@ -27,11 +27,11 @@ class GraphClass:
         if not self.noLoops:
             warnings.warn('adjacency matrix \'A\' contains loops')
             print('UserWarning: adjacency matrix \'A\' contains loops')
-        if A.dtype != int:
-            if not np.isclose(np.max(np.abs(A - A.astype(int))), 0):
-                warnings.warn('adjacency matrix \'A\' has been transformed into integer, some information has been lost')
-                print('UserWarning: adjacency matrix \'A\' has been transformed into integer, some information has been lost')
-            A=A.astype(int)
+        # if A.dtype != int:
+        #     if not np.isclose(np.max(np.abs(A - A.astype(int))), 0):
+        #         warnings.warn('adjacency matrix \'A\' has been transformed into integer, some information has been lost')
+        #         print('UserWarning: adjacency matrix \'A\' has been transformed into integer, some information has been lost')
+        #     A=A.astype(int)
         self.N = A.shape[0]
         if labels is None:
             self.labels = {i: i for i in range(self.N)}
@@ -41,14 +41,14 @@ class GraphClass:
             if len(np.unique(np.array(list(labels.values()) if (labels.__class__ == dict) else  labels))) != self.N:
                 raise ValueError('labels are not unique')
             self.labels = {i: labels[i] for i in range(self.N)}
-        self.symmetry = np.allclose(A, A.T, atol=1e-10)
+        self.symmetry = np.allclose(A[np.logical_not(np.isnan(A))], A.T[np.logical_not(np.isnan(A.T))], atol=1e-10)
         if self.symmetry:
-            self.degree = {i: j for i, j in zip(list(self.labels.values()), np.sum(A, axis = 1))}
+            self.degree = {i: j for i, j in zip(list(self.labels.values()), np.nansum(A, axis = 1))}
         else:
             warnings.warn('adjacency matrix \'A\' is not symmetric')
             print('UserWarning: adjacency matrix \'A\' is not symmetric')
-            self.inDegree = {i: j for i, j in zip(list(self.labels.values()), np.sum(A, axis = 0))}
-            self.outDegree = {i: j for i, j in zip(list(self.labels.values()), np.sum(A, axis = 1))}
+            self.inDegree = {i: j for i, j in zip(list(self.labels.values()), np.nansum(A, axis = 0))}
+            self.outDegree = {i: j for i, j in zip(list(self.labels.values()), np.nansum(A, axis = 1))}
         self.A = copy(A)
         self.averDeg = np.array(list((self.degree if self.symmetry else self.outDegree).values())).mean()
         self.density = self.averDeg / (self.N - (1 if self.noLoops else 0))
@@ -85,6 +85,8 @@ class ExtGraph(GraphClass):
                 self.Us_est=copy(self.Us_emp)
                 self.Ord_est=copy(self.Ord_emp)
             elif estMethod=='mds':
+                if np.any(np.isnan(self.A)):
+                    raise ValueError('multidimensional scaling can only be applied when A has no NaN\'s')
                 distMat = euclidean_distances(self.A)
                 MatA = (-1/2) * distMat**2
                 MatB = MatA - np.repeat(MatA.mean(axis=1), self.N).reshape(self.N, self.N) - np.tile(MatA.mean(axis=0), self.N).reshape(self.N, self.N) + np.repeat(MatA.mean(), self.N**2).reshape(self.N, self.N)
@@ -152,8 +154,14 @@ class ExtGraph(GraphClass):
         if not self.sorting is None:
             copyObj.sort(self.sorting)
         return(copyObj)
-    def showAdjMat(self, make_show=True, savefig=False, file_=None):
-        plot1 = plt.imshow(self.A, cmap = 'Greys', interpolation = 'none', vmin = 0, vmax = 1)
+    def showAdjMat(self, cuts=None, make_show=True, savefig=False, file_=None):
+        cmap_ = copy(plt.get_cmap('Greys'))
+        cmap_.set_bad(color='grey')
+        plot1 = plt.imshow(self.A, cmap = cmap_, interpolation = 'none', vmin = 0, vmax = 1)
+        if cuts is not None:
+            ax1 = plt.gca()
+            lines1 = [ax1.axvline(x=x_, color='r', linestyle='--') for x_ in (np.round(cuts * self.A.shape[1]) - 0.5)]
+            lines2 = [ax1.axhline(y=y_, color='r', linestyle='--') for y_ in (np.round(cuts * self.A.shape[0]) - 0.5)]
         plt.locator_params(nbins=6)
         locs, labels = plt.xticks()
         x_lim, y_lim = plt.xlim(), plt.ylim()
@@ -173,12 +181,13 @@ class ExtGraph(GraphClass):
             plt.savefig(file_)
             plt.close(plt.gcf())
         else:
-            return(plot1)
-    def showUsCDF(self, Us_type=None, make_show=True, savefig=False, file_=None):
-        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else 'est')
+            return(eval('plot1' + (', lines1, lines2' if cuts is not None else '')))
+    def showUsCDF(self, Us_type=None, showBisect=True, col1='C1', col2='C0', make_show=True, savefig=False, file_=None):
+        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else ('est' if (not self.Us_('est') is None) else 'emp'))
         Us = self.Us_(Us_type)
-        plot1 = plt.plot(np.concatenate(([0], np.repeat(np.sort(Us),2), [1])), np.repeat(np.arange(self.N+1)/self.N,2))
-        plt.plot([0,1],[0,1])
+        plot1 = plt.plot(np.concatenate(([0], np.repeat(np.sort(Us),2), [1])), np.repeat(np.arange(self.N+1)/self.N,2), color=col1)
+        if showBisect:
+            plt.plot([0,1],[0,1], color=col2)
         plt.xlim((-1/20,21/20))
         plt.ylim((-1/20,21/20))
         plt.gca().set_aspect(np.abs(np.diff(plt.gca().get_xlim())/np.diff(plt.gca().get_ylim()))[0])
@@ -190,7 +199,7 @@ class ExtGraph(GraphClass):
         else:
             return(plot1)
     def showUsHist(self, Us_type=None, bins=20, alpha=0.3, showSplits=True, make_show=True, savefig=False, file_=None):
-        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else 'est')
+        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else ('est' if (not self.Us_('est') is None) else 'emp'))
         if np.isscalar(bins):
             splitPos = np.linspace(0,1,bins+1)
         else:
@@ -208,7 +217,7 @@ class ExtGraph(GraphClass):
         else:
             return(eval(('plot1, ' if showSplits else '') + 'hist1'))
     def showObsDegree(self, Us_type=None, absValues=False, norm=False, fmt='o', title = True, make_show=True, savefig=False, file_=None):
-        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else 'est')
+        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else ('est' if (not self.Us_('est') is None) else 'emp'))
         Us = self.Us_(Us_type)
         if norm:
             plt.ylim((-(1/20)* self.N,(21/20)* self.N) if absValues else (-1/20,21/20))
@@ -226,7 +235,7 @@ class ExtGraph(GraphClass):
         else:
             return(plot1)
     def showExpDegree(self, graphon, Us_type=None, givenUs=False, absValues=False, norm=False, size=1000, fmt='o', title = True, make_show=True, savefig=False, file_=None):
-        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else 'est')
+        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else ('est' if (not self.Us_('est') is None) else 'emp'))
         Us = self.Us_(Us_type)
         if norm:
             plt.ylim((-(1/20)* self.N,(21/20)* self.N) if absValues else (-1/20,21/20))
@@ -288,51 +297,84 @@ class ExtGraph(GraphClass):
             plt.close(plt.gcf())
         else:
             return(plot1, plot2)
-    def showNet(self, makeColor=True, Us_type=None, splitPos=None, byGroup=False, showColorBar=True, colorMap = 'jet', byDegree=False, with_labels=False, fig_ax=None, make_show=True, savefig=False, file_=None):
+    def showNet(self, makeColor=True, Us_type=None, removeIsolates=False, splitPos=None, byGroup=False, showColorBar=True, colorMap = 'jet', byDegree=False, minMax_nodeSize=[10, 80, 10], with_labels=False, flipHrzl=False, flipVert=False, fig_ax=None, make_show=True, savefig=False, file_=None):
         # Us_type = type of U's using for coloring - if None -> no coloring
-        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else 'est')
-        Us_ = self.Us_(Us_type)
         if fig_ax is None:
             fig, ax = plt.subplots()
         else:
             fig, ax = fig_ax
-        if ((len(splitPos) > 2) if (not splitPos is None) else False):
-            # consider adjustment in Graphon.showSlices
-            nSubs = len(splitPos)-1
-            ## choose one of the two
-            # #1:
-            # vals_onColScal = [np.repeat(.5, int(np.round((splitPos[i + 1] - splitPos[i]) * self.N * 10))) for i in range(nSubs)] if byGroup else \
-            #     [np.linspace(0, 1, int(np.round((splitPos[i + 1] - splitPos[i]) * self.N * 10))) for i in range(nSubs)]
-            # splitPos_new = np.append([0], np.cumsum([(len(vals_i) / len_total) for len_total in [len(np.concatenate(vals_onColScal))] for vals_i in vals_onColScal]))
-            ##
-            #2:
-            deltaTotal = (.45 - 1/nSubs)**2 - (.45**2 -.4)
-            splitPos_ext = np.cumsum(np.append([0], np.concatenate([[prop_i, deltaTotal/(nSubs-1)] for prop_i in np.diff(splitPos) * (1-deltaTotal)])[:-1]))
-            vals_onColScal = [np.repeat((splitPos_ext[i*2]+splitPos_ext[i*2+1])/2,int(np.round((splitPos_ext[i*2+1]-splitPos_ext[i*2])*self.N *10))) for i in range(nSubs)] if byGroup else \
-                    [np.linspace(splitPos_ext[i*2],splitPos_ext[i*2+1],int(np.round((splitPos_ext[i*2+1]-splitPos_ext[i*2])*self.N *10))) for i in range(nSubs)]
-            splitPos_new = np.append([0], np.cumsum([(len(vals_i)/len_total) for len_total in [len(np.concatenate(vals_onColScal))] for vals_i in vals_onColScal]))
-            ## choose end
-            for i in range(nSubs):
-                Us_[np.logical_and(self.Us_(Us_type) >= splitPos[i], self.Us_(Us_type) < splitPos[i + 1])] = (Us_[np.logical_and(self.Us_(Us_type) >= splitPos[i], self.Us_(Us_type) < splitPos[i + 1])] - splitPos[i]) * (splitPos_new[i + 1] - splitPos_new[i]) / (splitPos[i + 1] - splitPos[i]) + splitPos_new[i]
-            ## choose one of the two
-            # #1:
-            # cmap_ = LinearSegmentedColormap.from_list('my_colormap', np.vstack((
-            #     [LinearSegmentedColormap.from_list('name_' + i.__str__(), ['C' + (i*2).__str__(), 'C' + (i*2+1).__str__()])(vals_onColScal[i]) for i in range(nSubs)]
-            # )))
-            ##
-            #2:
-            cmap_vals = plt.get_cmap(colorMap)((np.concatenate(vals_onColScal)))
-            cmap_ = LinearSegmentedColormap.from_list('my_colormap', cmap_vals)
-            ## choose end
-        else:
-            cmap_ = plt.get_cmap(colorMap)
+        if makeColor:
+            Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else ('est' if (not self.Us_('est') is None) else 'emp'))
+            Us_ = self.Us_(Us_type)
+            if ((len(splitPos) > 2) if (not splitPos is None) else False):
+                # consider adjustment in Graphon.showSlices
+                nSubs = len(splitPos)-1
+                ## choose one of the two
+                # #1:
+                # vals_onColScal = [np.repeat(.5, int(np.round((splitPos[i + 1] - splitPos[i]) * self.N * 10))) for i in range(nSubs)] if byGroup else \
+                #     [np.linspace(0, 1, int(np.round((splitPos[i + 1] - splitPos[i]) * self.N * 10))) for i in range(nSubs)]
+                # splitPos_new = np.append([0], np.cumsum([(len(vals_i) / len_total) for len_total in [len(np.concatenate(vals_onColScal))] for vals_i in vals_onColScal]))
+                ##
+                #2:
+                deltaTotal = (.45 - 1/nSubs)**2 - (.45**2 -.4)
+                splitPos_ext = np.cumsum(np.append([0], np.concatenate([[prop_i, deltaTotal/(nSubs-1)] for prop_i in np.diff(splitPos) * (1-deltaTotal)])[:-1]))
+                vals_onColScal = [np.repeat((splitPos_ext[i*2]+splitPos_ext[i*2+1])/2,int(np.round((splitPos_ext[i*2+1]-splitPos_ext[i*2])*self.N *10))) for i in range(nSubs)] if byGroup else \
+                        [np.linspace(splitPos_ext[i*2],splitPos_ext[i*2+1],int(np.round((splitPos_ext[i*2+1]-splitPos_ext[i*2])*self.N *10))) for i in range(nSubs)]
+                splitPos_new = np.append([0], np.cumsum([(len(vals_i)/len_total) for len_total in [len(np.concatenate(vals_onColScal))] for vals_i in vals_onColScal]))
+                ## choose end
+                for i in range(nSubs):
+                    Us_[np.logical_and(self.Us_(Us_type) >= splitPos[i], self.Us_(Us_type) < splitPos[i + 1])] = (Us_[np.logical_and(self.Us_(Us_type) >= splitPos[i], self.Us_(Us_type) < splitPos[i + 1])] - splitPos[i]) * (splitPos_new[i + 1] - splitPos_new[i]) / (splitPos[i + 1] - splitPos[i]) + splitPos_new[i]
+                ## choose one of the two
+                # #1:
+                # cmap_ = LinearSegmentedColormap.from_list('my_colormap', np.vstack((
+                #     [LinearSegmentedColormap.from_list('name_' + i.__str__(), ['C' + (i*2).__str__(), 'C' + (i*2+1).__str__()])(vals_onColScal[i]) for i in range(nSubs)]
+                # )))
+                ##
+                #2:
+                cmap_vals = plt.get_cmap(colorMap)((np.concatenate(vals_onColScal)))
+                cmap_ = LinearSegmentedColormap.from_list('my_colormap', cmap_vals)
+                ## choose end
+            else:
+                cmap_ = plt.get_cmap(colorMap)
         if makeColor and showColorBar:
             hidePlot = ax.matshow(np.array([[0, 1]]), cmap=cmap_, aspect='auto', origin='lower', extent=(-0.1, 0.1, -0.1, 0.1))
             hidePlot.set_visible(False)
         sortOrd = np.argsort(self.labels_())
         G_nx = nx.from_numpy_array(self.A[sortOrd][:,sortOrd])
+        if with_labels:
+            labeldict = dict(zip(range(self.N), np.array(list(self.labels.values()))[sortOrd]))
         node_color = cmap_(Us_[sortOrd]) if makeColor else None
-        net1 = nx.draw_networkx(G_nx, pos=nx.kamada_kawai_layout(G_nx), with_labels=with_labels, node_size=(self.degree_()[sortOrd] / np.max(self.degree_()) *50) if byDegree else 35,
+        pos_ = nx.kamada_kawai_layout(G_nx)
+        if flipHrzl:
+            pos_ = {node: (-x, y) for (node, (x, y)) in pos_.items()}
+        if flipVert:
+            pos_ = {node: (x, -y) for (node, (x, y)) in pos_.items()}
+        if byDegree:
+            degree_new = np.maximum(self.degree_(), 1)
+            min_, max_ = np.min(degree_new), np.max(degree_new)
+            ### method 1:
+            node_size = (np.log10(((degree_new[sortOrd] - min_) / (max_ - min_)) * (minMax_nodeSize[2] -1) +1) / np.log10(minMax_nodeSize[2])) * (minMax_nodeSize[1] - minMax_nodeSize[0]) + minMax_nodeSize[0]
+            ### method 2:
+            # node_size = (np.log10(degree_new[sortOrd] / min_) / np.log10(max_ / min_)) * (minMax_nodeSize[1] - minMax_nodeSize[0]) + minMax_nodeSize[0]
+        else:
+            node_size = minMax_nodeSize[1]  # 35
+        # node_size = (np.maximum(self.degree_()[sortOrd], 1) / np.max([np.max(self.degree_()), 1]) * max_nodeSize) if byDegree else 35
+        if removeIsolates:
+            isolts = list(nx.isolates(G_nx))
+            # isolts = list(nx.isolates(G_nx if (edgeType == 'observed') else G_nx_new))
+            if not np.isscalar(node_size):
+                node_size = np.delete(node_size, isolts)
+            # exec('' if np.isscalar(node_size) else 'node_size = np.delete(node_size, isolts)')
+            if node_color is not None:
+                node_color = np.delete(np.array(node_color), isolts, axis=0).tolist()
+            # exec('' if node_color is None else 'node_color = np.delete(np.array(node_color), isolts, axis=0).tolist()')
+            if not np.isscalar(weights):
+                weights_new = np.zeros((self.N, self.N))
+                weights_new[np.triu_indices(self.N)] = weights
+                weights = np.delete(np.delete(weights_new, isolts, axis=0), isolts, axis=1)[np.triu_indices(self.N - len(isolts))].tolist()
+            # exec('' if np.isscalar(weights) else 'weights = np.delete(weights, isolts)')
+            exec(('G_nx' if (edgeType == 'observed') else 'G_nx_new') + '.remove_nodes_from(isolts)')
+        net1 = nx.draw_networkx(G_nx, pos=pos_, with_labels=with_labels, labels=labeldict if with_labels else None, ax=ax, node_size=node_size,
                                 node_color=node_color, cmap=None, width=0.2, style='solid')
         ## applies a normalization on coloring [vmin = min(Us), vmax = max(Us)]
         # net1 = nx.draw_networkx(G_nx, pos=nx.kamada_kawai_layout(G_nx), with_labels=with_labels, node_size=(self.degree_() / np.max(self.degree_()) *50) if byDegree else 35,
@@ -350,14 +392,14 @@ class ExtGraph(GraphClass):
         else:
             return(eval('net1' + (', cbar' if (makeColor and showColorBar) else '')))
     def logLik(self, graphon, Us_type=None, regardNoLoop=True, regardSym=False):
-        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else 'est')
+        Us_type = Us_type if (not Us_type is None) else (self.sorting if (not self.sorting is None) else ('est' if (not self.Us_('est') is None) else 'emp'))
         Pi_mat = np.minimum(np.maximum(graphon.fct(self.Us_(Us_type), self.Us_(Us_type)), 1e-7), 1 - 1e-7)
         logProbMat = (self.A * np.log(Pi_mat)) + ((1 - self.A) * np.log(1 - Pi_mat))
         if regardNoLoop:
             np.fill_diagonal(logProbMat, 0)
         if regardSym:
             logProbMat[np.tril_indices(self.N,-1)] = 0
-        return(np.sum(logProbMat))
+        return(np.nansum(logProbMat))
 #out: Extended Graph Object
 #     A = adjacency matrix, labels = labels of the nodes, N = order of the graph, (in-/out-)degree = dictionary of the (in-/out-)degrees,
 #     symmetry = logical whether the adjacency matrix is symmetric,
@@ -418,7 +460,7 @@ def ProbOfNet(sortG,graphon,Us_type=None):
     Us = copy(sortG.Us_('est' if (Us_type is None) else Us_type))
     N = copy(sortG.N)
     probVec = graphon.fct(Us,Us)[np.triu_indices(N,1)]
-    return(np.prod((probVec**(A[np.triu_indices(N,1)])) * ((1-probVec)**(1-A[np.triu_indices(N,1)]))))
+    return(np.nanprod((probVec**(A[np.triu_indices(N,1)])) * ((1-probVec)**(1-A[np.triu_indices(N,1)]))))
 #out: probability that the network will realize as observed
 
 # Calculate Likelihood of the network given the graphon with number of decimal digits is calculated separately
@@ -431,7 +473,7 @@ def ProbOfNet2(sortG,graphon,Us_type=None, groupSize=100):
     stageRes = 1
     dec_ = 0
     for i in range(int(np.ceil(probVec2.size / groupSize))):
-        stageRes *= np.prod(probVec2[np.arange(i*groupSize,np.min([(i+1)*groupSize, probVec2.size]))])
+        stageRes *= np.nanprod(probVec2[np.arange(i*groupSize,np.min([(i+1)*groupSize, probVec2.size]))])
         if stageRes <= 0:
             raise ValueError('network is impossible to be generated from the graphon')
         else:
