@@ -1,5 +1,7 @@
 # SBSGMest
-EM-Based Estimation Routine for Stochastic Block Smooth Graphon Models - see 'Stochastic Block Smooth Graphon Model' [arXiv:2203.13304] 
+EM-Based Estimation Routine for the Stochastic Block Smooth Graphon Model
+
+[Sischka, B. & Kauermann, G. (2022). Stochastic Block Smooth Graphon Model. arXiv preprint arXiv:2203.13304]
 
 
  - SBSGMpy:
@@ -32,10 +34,18 @@ EM-Based Estimation Routine for Stochastic Block Smooth Graphon Models - see 'St
 
 	-> File to execute for running the algorithm.
 
-	 * command in terminal / shell / console to run the script:
-	   python3 >>path_to_file<</application.py > >>path_to_file<</output.txt
+	 * Settings for manual adaptation are clearly delimited.
 
-	 * adjustment when running in interactive session:
+	 * For applying the alliance network:
+	     1. download data set alliances_strong_post_adjMat_2016.csv
+	     2. embed file in folder structure Data/alliances/***.csv
+	     3. place Data folder at same level as package folder SBSGMpy
+
+	 * Command in terminal / shell / console to run the script:
+	   cd ~/>>path_to_folder<</SBSGMest
+	   python3 application.py > output.txt
+
+	 * Adjustment when running in interactive session:
 	   dir1_ = os.path.dirname(os.path.realpath(''))
 
 	 * Creates new local folder named 'Graphics' where all figures will be saved.
@@ -45,20 +55,20 @@ EM-Based Estimation Routine for Stochastic Block Smooth Graphon Models - see 'St
  - Data:
  -------
   
-  Simulation data configurations (see application.py).
+  Simulation data -- configurations (see application.py)
   
-  * Assortative Structures with Smooth Within-Group Differences:
-    byExID_nb = 2
-    idX = 205
+  * Assortative Structure with Smooth Within-Group Differences:
+    idX = 1
+    [ -> byExID2(idX=205)]
   * Core-Periphery Structure:
-    byExID_nb = 2
-    idX = 207
+    idX = 2
+    [ -> byExID2(idX=207)]
   * Mixture of Assortative and Disassortative Structures under Equal Overall Attractiveness:
-    byExID_nb = 2
-    idX = 208
+    idX = 3
+    [ -> byExID2(idX=208)]
   
   
-	Data sources which have been used for real-world network examples.
+	Data sources which have been used for real-world network examples
 
 	* political blog network, downloaded from 
 

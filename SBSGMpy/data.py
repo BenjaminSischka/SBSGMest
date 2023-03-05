@@ -29,7 +29,7 @@ def create_data(data_):
         coms = np.array(list(nx.get_node_attributes(G, 'value').values()))
         ## labels: liberals=0, conservatives=1 ;  colors in Adamic et al. (2005): liberals=blue, conservatives=red
         Us_real = np.maximum(np.minimum(coms, 1 - 1e-3), 1e-3)
-        ### -> liberals=bluish, conservatives=reddish
+        ## -> liberals=bluish, conservatives=reddish
         adjMat_dirc = nx.to_numpy_array(G)
         adjMat = np.minimum(1, adjMat_dirc + adjMat_dirc.T)
         np.fill_diagonal(adjMat, 0)
@@ -52,7 +52,7 @@ def create_data(data_):
         adjMat_new = adjMat[idx_vec][:, idx_vec]
         Us_real_new = Us_real[idx_vec]
         labels_new = np.array(list(G.nodes))[idx_vec]
-        ### save reduced and modified network in new file
+        ## save extracted and modified network in new file
         G_new = nx.from_numpy_array(adjMat_new)
         mapping = {list(G_new.nodes())[i]: labels_new[i] for i in range(len(labels_new))}
         G_new = nx.relabel_nodes(G_new, mapping)
@@ -86,7 +86,7 @@ def GraphFromData(data_, estMethod = None, dir_ = os.path.realpath('..'), addLab
     if data_ == 'brain':
         weightMat = scipy.io.loadmat(os.path.join(dir_, 'Data/human_brain') + '/Coactivation_matrix.mat')['Coactivation_matrix']
         adjMat = (weightMat >= 1e-5).astype('int')
-        # an edge between two brain regions means that there is at least one task at which they are coactivated
+        ## an edge between two brain regions means that there is at least one task at which they are coactivated
     ##### Santa Fe Collaboration Network
     if data_ == 'santa_fe':
         edge_list = np.zeros((0, 2)).astype('int')
@@ -136,7 +136,7 @@ def GraphFromData(data_, estMethod = None, dir_ = os.path.realpath('..'), addLab
             margSum_pos = (adjMat.sum(axis=0) > 0)
             adjMat = adjMat[margSum_pos][:, margSum_pos]
             node_labels = np.array(node_labels)[margSum_pos]
-            # remove isolated groups and single connected nodes
+            ## remove isolated groups and single connected nodes
             all_other = np.logical_not(np.in1d(node_labels, ['China', 'Cuba', 'North Korea', 'Bosnia and Herzegovina', 'Syria']))
             adjMat = adjMat[all_other][:, all_other]
             node_labels = node_labels[all_other]

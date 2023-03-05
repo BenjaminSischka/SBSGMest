@@ -9,7 +9,8 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from copy import copy
 import warnings
-from SBSGMpy.fitting import Estimator
+from graspologic.models import DCSBMEstimator
+from SBSGMpy.fitting import estSplitPos, Estimator
 from SBSGMpy.sampling import Sample
 
 # Plot the development of the optimization with respect to the information criterion
@@ -33,176 +34,228 @@ def showOptForAIC(AIC_opt_lamb_list,AIC_opt_vals_list,m,make_show=True,savefig=F
 
 def iterateEM(sortG,
               k, nSubs, nKnots, useOneBasis, critType, canonical, est_initSplitPos, adjustSubs, adjustQuantiles,
-              n_steps, proposal, sigma_prop, use_origFct, averageType, use_stdVals,
-              n_iter, rep_start, rep_end, it_rep_grow, rep_forPost,
-              lambda_start, lambda_skip1, lambda_lim1, lambda_skip2, lambda_lim2, lambda_last_m,
-              n_eval, trajMat=None,
-              startWithEst=True, estGraphon=None, endWithSamp=True, raiseLabNb=False,
+              updateStrategy, n_steps, proposal, sigma_prop, averageType, max_steps, n_try, use_origFct, use_stdVals,
+              n_maxIter, lambda_init, n_init, burnIn_init, rep_start, rep_grow, rep_forPost, n_eval,
+              init_allRandom=False, stopVal=.0025, useDCSBM=False,
+              splitPos=None, splitPos_real=None, lambdaLim_start=[5., 500.],
               returnLambList=True, returnGraphonList=False, returnSampList=False, returnAllGibbs=False,
-              lambdaList=None, estGraphonList=[], sampleList=[],
               makePlots=False, make_show=None, savefig=False, simulate=None, log_scale=False, dir_=None):
-    lambdas_ = None
-    if trajMat is None:
-        trajMat = np.zeros((0, n_eval, n_eval))
-    if trajMat.shape[1:] != (n_eval,n_eval):
-        raise TypeError('dimension of trajMat does not match n_eval')
-    AIC_vec = np.array([])
-    if not startWithEst:
-        n_iter = n_iter+1
+    lambdaList, estGraphonList, sampleList = np.zeros((0, nSubs, nSubs)), [], []
+    trajMat = np.zeros((0, n_eval, n_eval))
+    if nSubs == 1:
+        useOneBasis, est_initSplitPos, adjustSubs = True, False, False
+        proposal = 'logit_norm' if (proposal == 'mixture') else ('uniform' if (proposal == 'exclus_unif') else proposal)
+        averageType = 'mean' if (averageType == 'mode_mean') else averageType
+    AIC_vec, doRep_logic = np.array([]), True
+    rep = [0, 0]
+    n_maxIter = n_maxIter + n_init
+    index = 1
     ### EM based algorithm
-    for index in range(1,n_iter+1):
-        labNb = index + raiseLabNb
-        ## global phases:
-        glob_phase1 = (index == 1)                                                      # phase 1a: index == 1
-        glob_NotPhase1 = (not glob_phase1)
-        ## phases of lambda_:
-        lmd_phase1 = (index <= lambda_skip1)                                            # phase 1b: index <= lambda_skip1
-        lmd_phase2 = ((index > lambda_skip1) and (index <= lambda_lim1))                # phase 2: lambda_skip1 < index <= lambda_lim1
-        #lmd_phase3 = ((index > lambda_lim1) and (index <= lambda_skip2))               # phase 3: lambda_lim1 < index <= lambda_skip2
-        lmd_phase4a = ((index > lambda_skip2) and (index <= lambda_lim2))               # phase 4a: lambda_skip2 < index <= lambda_lim2
-        lmd_phase4b = (index == lambda_lim2)                                            # phase 4b: index == lambda_lim2
-        #lmd_phase5a = ((index > lambda_lim2) and (index <= (n_iter-lambda_last_m)))    # phase 5a: lambda_lim2 < index <= n_iter-lambda_last_m
-        lmd_phase5b = (index == (n_iter-lambda_last_m))                                 # phase 5b: index == n_iter-lambda_last_m
-        lmd_phase6 = (index > (n_iter-lambda_last_m))                                   # phase 6: n_iter-lambda_last_m < index
-        ### Update the graph
-        if glob_NotPhase1:  # index > 1
+    while (index <= n_maxIter):
+        ### Update graph
+        if index == 1:
+            if useDCSBM:
+                dcsbm_res = DCSBMEstimator(directed=False, loops=False, min_comm=nSubs, max_comm=nSubs)
+                dcsbm_res.fit(sortG.A)
+                counts_ = np.unique(dcsbm_res.vertex_assignments_, return_counts=True)
+                if len(counts_[0]) != nSubs:
+                    raise TypeError('degree-corrected stochastic blockmodel contains empty groups')
+                if not np.all([(counts_[0][i_] in range(nSubs)) for i_ in range(nSubs)]):
+                    raise TypeError('labeling of groups is not as expected, should be [0, ..., nSubs]')
+                splitPos_ = np.cumsum(np.append([0], counts_[1])) / sortG.N
+                Us_est_ = np.zeros(sortG.N)
+                for gr_i in range(nSubs):
+                    subIndices_logic = dcsbm_res.vertex_assignments_ == gr_i
+                    Us_est_[subIndices_logic] = np.linspace(splitPos_[gr_i], splitPos_[gr_i + 1], counts_[1][gr_i] + 2)[1:-1][np.argsort(np.argsort(np.squeeze(dcsbm_res.degree_corrections_)[subIndices_logic]))]
+                sortG.update(Us_est=Us_est_)
+                if sortG.sorting != 'est':
+                    sortG.sort('est')
+                if not est_initSplitPos:
+                    splitPos_ = np.linspace(0, 1, nSubs + 1)
+                if splitPos is None:
+                    splitPos = splitPos_
+            else:
+                if splitPos is None:
+                    ## consider splitPos in Estimator.GraphonEstBySpline(..., est_splitPos=True, ...)
+                    if est_initSplitPos:
+                        splitPos = estSplitPos(sortG=sortG, nSubs=nSubs)
+                    else:
+                        splitPos = np.linspace(0, 1, nSubs + 1)
+        else:
             print('Update graph')
-            sample.updateGraph(use_stdVals =use_stdVals)
-            if makePlots:
-                sortG.showAdjMat(make_show=make_show, savefig=savefig, file_=dir_ + 'adjMat_' + (labNb-1).__str__() + '.png')
+            sample.updateGraph(use_stdVals=use_stdVals)
+            if index in (([int(round(n_init / 2)) + 1] if (n_init >= 5) else []) + \
+                         ([int(round(n_init * 1 / 3)) + 1, int(round(n_init * 3 / 4)) + 1] if (n_init >= 10) else []) + \
+                         ([n_init + 1] if (n_init >= 1) else [])):
+                splitPos = estSplitPos(sortG=sortG, nSubs=nSubs)
+            else:
+                splitPos = copy(estGraphon.splitPos) if hasattr(estGraphon, 'splitPos') else None
+                ## force the algorithm to keep the given number of communities
+                if not splitPos is None:
+                    grInd = np.searchsorted(splitPos, sortG.Us_(sortG.sorting))
+                    count_obj = np.unique(grInd, return_counts=True)
+                    if not np.all([(gr_i in count_obj[0]) for gr_i in np.arange(1, nSubs + 1)]):
+                        emptyGr = np.array([(not (gr_i in count_obj[0])) for gr_i in np.arange(1, nSubs + 1)])
+                        splitPos_rmv = (splitPos[np.concatenate((np.logical_not(emptyGr), [True]))] + splitPos[np.concatenate(([True], np.logical_not(emptyGr)))]) / 2
+                        splitPos_rmv[0], splitPos_rmv[-1] = 0., 1.
+                        splitPos_new = estSplitPos(nSubs=nSubs, sortG=sortG, splitPos=splitPos_rmv)
+                        newSplits = splitPos_new[[(not np.any(np.isclose(splitPos_new_i, splitPos_rmv))) for splitPos_new_i in splitPos_new]]
+                        warnings.warn('[result nb ' + (index - 1).__str__() + '] empty communit' + (('y ' + (np.where(emptyGr)[0][0] + 1).__str__() + ' with interval ' + str(splitPos[np.where(emptyGr)[0][0] + np.array([0, 1])]) + ' has') if (emptyGr.sum() == 1) else \
+                                                                                                  ('ies ' + ', '.join((np.where(emptyGr)[0] + 1).astype(str)) + ' with intervals ' + ', '.join([str(splitPos[epty_i + np.array([0, 1])]) for epty_i in np.where(emptyGr)[0]]) + ' have')) + \
+                                      ' been removed;\n' + ('a new split has' if (emptyGr.sum() == 1) else 'new splits have') + ' been inserted at ' + ', '.join(map(lambda x: str(round(x, 4)), newSplits)))
+                        print('UserWarning: [result nb ' + (index - 1).__str__() + '] empty communit' + (('y ' + (np.where(emptyGr)[0][0] + 1).__str__() + ' with interval ' + str(splitPos[np.where(emptyGr)[0][0] + np.array([0, 1])]) + ' has') if (emptyGr.sum() == 1) else \
+                                                                                                             ('ies ' + ', '.join((np.where(emptyGr)[0] + 1).astype(str)) + ' with intervals ' + ', '.join([str(splitPos[epty_i + np.array([0, 1])]) for epty_i in np.where(emptyGr)[0]]) + ' have')) + \
+                              ' been removed;\n' + ('a new split has' if (emptyGr.sum() == 1) else 'new splits have') + ' been inserted at ' + ', '.join(map(lambda x: str(round(x, 4)), newSplits)))
+                        splitPos = splitPos_new
+                        if not (estGraphon.tau_sep is None):
+                            if not np.all([np.allclose(np.diff(tau_sep_i[k:-k]), np.repeat(tau_sep_i[k + 1] - tau_sep_i[k], len(tau_sep_i[k:-k]) - 1)) for tau_sep_i in estGraphon.tau_sep if (len(tau_sep_i[k:-k]) > 0)]):
+                                warnings.warn('manually adapted knot positions have been discarded')
+                                print('UserWarning: manually adapted knot positions have been discarded')
+                        if not np.isscalar(estGraphon.lambda_):
+                            estGraphon.lambda_ = [estGraphon.lambda_[np.logical_not(emptyGr)][:,np.logical_not(emptyGr)][lmbd_selction][:,lmbd_selction] \
+                                                  for lmbd_selction in [np.sort(np.append(np.arange(np.logical_not(emptyGr).sum()), np.searchsorted(splitPos_rmv, newSplits) - 1))]][0]
+        if makePlots:
+            sortG.showAdjMat(make_show=make_show, savefig=savefig, file_=dir_ + 'adjMat_' + (index - 1).__str__() + '.png')
+            if not (make_show or savefig):
+                plt.clf()
+            sortG.showNet(splitPos=splitPos, make_show=make_show, savefig=savefig, file_=dir_ + 'network_' + (index - 1).__str__() + '.png')
+            if not (make_show or savefig):
+                plt.clf()
+            if simulate:
+                sortG.showDiff(Us_type='est', splitPos_est=splitPos, splitPos_real=splitPos_real, EMstep_sign='(' + (index - 1).__str__() + ')', make_show=make_show, savefig=savefig, file_=dir_ + 'Us_diffReal_' + (index - 1).__str__() + '.png')
                 if not (make_show or savefig):
                     plt.clf()
-                splitPos1 = copy(estGraphon.splitPos) if hasattr(estGraphon, 'splitPos') else None
-                sortG.showNet(splitPos=splitPos1, make_show=make_show, savefig=savefig, file_=dir_ + 'network_' + (labNb-1).__str__() + '.png')
+            if adjustSubs or adjustQuantiles:
+                sortG.showUsCDF('est', make_show=make_show, savefig=savefig, file_=dir_ + 'Us_cdf_' + (index - 1).__str__() + '.png')
                 if not (make_show or savefig):
                     plt.clf()
-                if simulate:
-                    sortG.showDiff(Us_type='est', EMstep_sign='(' + (labNb-1).__str__() + ')', make_show=make_show, savefig=savefig, file_=dir_ + 'Us_diffReal_' + (labNb-1).__str__() + '.png')
-                    if not (make_show or savefig):
-                        plt.clf()
-                if adjustSubs or adjustQuantiles:
-                    sortG.showUsCDF('est', make_show=make_show, savefig=savefig, file_=dir_ + 'Us_cdf_' + labNb.__str__() + '.png')
-                    if not (make_show or savefig):
-                        plt.clf()
-                    sortG.showUsHist(bins=((sortG.N/20) if (adjustQuantiles or (splitPos1 is None)) else splitPos1), make_show=make_show, savefig=savefig, file_=dir_ + 'Us_hist_' + labNb.__str__() + '.png')
-                    if not (make_show or savefig):
-                        plt.clf()
+                sortG.showUsHist(bins=(sortG.N/20) if (adjustQuantiles or (splitPos is None)) else splitPos, make_show=make_show, savefig=savefig, file_=dir_ + 'Us_hist_' + (index - 1).__str__() + '.png')
+                if not (make_show or savefig):
+                    plt.clf()
         ### Estimate Graphon
-        if (glob_NotPhase1 or startWithEst):  # (index > 1)
-            print('Estimation')
-            if (estGraphon is None):
+        print('Estimation')
+        if index == 1:
+            tau = None
+            tau_sep = None
+        else:
+            if adjustSubs:
                 tau = None
                 tau_sep = None
+            elif adjustQuantiles:
+                tau = copy(estGraphon.tau) if hasattr(estGraphon, 'tau') else None
+                tau_sep = None
                 splitPos = None
+                nKnots = None
             else:
-                if (adjustSubs and (not adjustQuantiles)):
-                    tau = None
-                    tau_sep = None
-                    splitPos = copy(estGraphon.splitPos) if hasattr(estGraphon, 'splitPos') else None
-                elif ((not adjustSubs) and adjustQuantiles):
+            ## note: 'else' means adjustSubs=adjustQuantiles=False since adjustSubs=adjustQuantiles=True is excluded through Estimator.GraphonEstBySpline
+                if useOneBasis:
                     tau = copy(estGraphon.tau) if hasattr(estGraphon, 'tau') else None
                     tau_sep = None
-                    splitPos = None
-                    nKnots = copy(estGraphon.nKnots) if hasattr(estGraphon, 'nKnots') else nKnots
                 else:
-                ## note: 'else' means adjustSubs=adjustQuantiles=False since adjustSubs=adjustQuantiles=True is excluded through Estimator.GraphonEstBySpline
-                    if useOneBasis:
-                        tau = copy(estGraphon.tau) if hasattr(estGraphon, 'tau') else None
-                        tau_sep = None
-                    else:
-                        tau = None
-                        tau_sep = copy(estGraphon.tau_sep) if hasattr(estGraphon, 'tau_sep') else None
-                    splitPos = copy(estGraphon.splitPos) if hasattr(estGraphon, 'splitPos') else None
-                    nKnots = copy(estGraphon.nKnots) if hasattr(estGraphon, 'nKnots') else nKnots
-            if lmd_phase1:  # (index <= lambda_skip1)
-                if ((index % 2) != 0):
-                    lambda_ = (1 - (1 - (((index - 1) / (lambda_skip1 - 1)) if (lambda_skip1 > 1) else 1.))**2) * (lambda_start - 1) + 1
-                    sigma_prop_ = sigma_prop * .5
-                    gamma = .75
-                else:
-                    lambda_ = (1 - (((index - 2) / (lambda_skip1 - 2)) if (lambda_skip1 > 2) else 1.))**2 * (np.max([5000, lambda_start*5]) - lambda_start) + lambda_start
-                    sigma_prop_ = sigma_prop * 2
-                    gamma = .25
+                    tau = None
+                    tau_sep = copy(estGraphon.tau_sep) if hasattr(estGraphon, 'tau_sep') else None
+                splitPos = None
+                nKnots = None
+        if index <= n_init:
+            if index in (int(round(n_init / 2)) + np.arange(-1,2)):
+                lambda_ = lambda_init[1]
             else:
-                sigma_prop_ = sigma_prop
-                gamma = .25 + ((index-1)/(n_iter-1)) *.5 in range(1,n_iter+1)
-            if lmd_phase5b:  # ***
-                lambda_ = np.min([25, lambda_start])
-                sigma_prop_ = sigma_prop * .5
-                gamma = .75
-            optForAIC = np.any([lmd_phase2, lmd_phase4a, lmd_phase6])
-            lambda_adjustSubs = lambda_adjustQuant = (index / n_iter) if (adjustSubs or adjustQuantiles) else None
-            Us_mult = None
-            estGraphonData=Estimator(sortG=sortG)
-            estGraphon=estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs, nKnots=nKnots, splitPos=splitPos, est_splitPos=est_initSplitPos, useOneBasis=useOneBasis, tau=tau, tau_sep=tau_sep,
-                                                         optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
+                lambda_ = lambda_init[0]
+            averageType_ = 'mean'
+            sigma_prop_ = sigma_prop
+            gamma = 1 / nSubs
+            if init_allRandom:
+                burnIn = burnIn_init
+            else:
+                burnIn = int(round((1 - ((index - 1) / (n_init - 1))) * burnIn_init))
+            rep[0], rep[1] = rep[1], index
+            optForAIC = False
+            lambda_adjustSubs = lambda_adjustQuant = (1/5) if (adjustSubs or adjustQuantiles) else None
+            lambdaMin, lambdaMax = None, None
+        else:
+            averageType_ = averageType
+            sigma_prop_ = sigma_prop
+            gamma = 1 / nSubs
+            burnIn = 0
+            rep[0] = rep[1]
+            rep[1] += (np.max([0, rep_start - rep[1]]) if (index == n_init + 1) else rep_grow) if (index < n_maxIter) else (rep_forPost - rep[1])
+            optForAIC = True
+            lambda_adjustSubs = lambda_adjustQuant = 1. if (adjustSubs or adjustQuantiles) else None
+            [lambdaMin, lambdaMax] = lambdaLim_start if (index == n_init + 1) else ([np.maximum(5., estGraphon.lambda_ * fctr_i) for fctr_i in [.33, 3]] if hasattr(estGraphon, 'lambda_') else [None, None])
+        estGraphonData=Estimator(sortG=sortG)
+        estGraphon=estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs, nKnots=nKnots, splitPos=splitPos, est_splitPos=False, useOneBasis=useOneBasis, tau=tau, tau_sep=tau_sep,
+                                                     optForAIC=optForAIC, lambdaMin=lambdaMin, lambdaMax=lambdaMax, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
+                                                     adjustSubs=adjustSubs, lambda_adjustSubs=lambda_adjustSubs, adjustQuantiles=adjustQuantiles, lambda_adjustQuant=lambda_adjustQuant,
+                                                     Us_mult=None, canonical=canonical, updateGraph=True, printWarn=False)
+        if makePlots:
+            estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + index.__str__() + '.png')
+            if not (make_show or savefig):
+                plt.clf()
+        ## force the algorithm to keep the given number of communities [should not occur when split positions are already updated, see above]
+        if np.any(estGraphon.freqUsSub == 0):
+            emptyGr = (estGraphon.freqUsSub == 0)
+            splitPos_rmv = (estGraphon.splitPos[np.concatenate((np.logical_not(emptyGr), [True]))] + estGraphon.splitPos[np.concatenate(([True], np.logical_not(emptyGr)))]) / 2
+            splitPos_rmv[0], splitPos_rmv[-1] = 0., 1.
+            us_ = np.concatenate([np.linspace(estGraphon.splitPos[i],estGraphon.splitPos[i+1], int(np.round(estGraphonData.sortG.N*((estGraphon.splitPos[i+1]-estGraphon.splitPos[i])/(1-sizeOff)))) +2)[1:-1] for sizeOff in [np.sum([(estGraphon.splitPos[i+1]-estGraphon.splitPos[i]) for i in range(estGraphon.nSubs) if emptyGr[i]])] for i in range(estGraphon.nSubs) if (not emptyGr[i])])
+            vs_list = [(tau_sep_i[k:-k] + np.concatenate(([1e-5],np.repeat(0,len(tau_sep_i[k:-k])-2),[-1e-5]))) for tau_sep_i in np.array(estGraphon.tau_sep)[np.logical_not(emptyGr)]]
+            lenVs = np.array([len(vs_list_i) for vs_list_i in vs_list])
+            vs_ = np.concatenate(vs_list)
+            probMat = estGraphon.fct(us_, vs_)
+            newSplits = [vs_list[group_i][val_i - (np.append([0], np.cumsum(lenVs - 1))[group_i]) + np.array([0, 1])].mean() for val_i in (np.delete(np.diff(probMat), np.cumsum(lenVs)[:-1] - 1, axis=1) ** 2).sum(axis=0).argsort()[-np.sum(emptyGr):] for group_i in [np.sum(np.cumsum(lenVs - 1) < (val_i + 1))]]
+            warnings.warn('[result nb ' + index.__str__() + '] empty communit' + (('y ' + (np.where(emptyGr)[0][0]+1).__str__() + ' with interval ' + str(estGraphon.splitPos[np.where(emptyGr)[0][0] + np.array([0, 1])]) + ' has') if (emptyGr.sum() == 1) else \
+                                                                                      ('ies ' + ', '.join((np.where(emptyGr)[0]+1).astype(str)) + ' with intervals ' + ', '.join([str(estGraphon.splitPos[epty_i + np.array([0, 1])]) for epty_i in np.where(emptyGr)[0]]) + ' have')) + \
+                          ' been removed;\n' + ('a new split has' if (emptyGr.sum() == 1) else 'new splits have') + ' been inserted at ' + ', '.join(map(lambda x: str(round(x,4)), newSplits)))
+            print('UserWarning: [result nb ' + index.__str__() + '] empty communit' + (('y ' + (np.where(emptyGr)[0][0]+1).__str__() + ' with interval ' + str(estGraphon.splitPos[np.where(emptyGr)[0][0] + np.array([0, 1])]) + ' has') if (emptyGr.sum() == 1) else \
+                                                                                           ('ies ' + ', '.join((np.where(emptyGr)[0]+1).astype(str)) + ' with intervals ' + ', '.join([str(estGraphon.splitPos[epty_i + np.array([0, 1])]) for epty_i in np.where(emptyGr)[0]]) + ' have')) + \
+                  ' been removed;\n' + ('a new split has' if (emptyGr.sum() == 1) else 'new splits have') + ' been inserted at ' + ', '.join(map(lambda x: str(round(x,4)), newSplits)))
+            newSplitPos = np.sort(np.append(splitPos_rmv, newSplits))
+            if not np.all([np.allclose(np.diff(tau_sep_i[k:-k]), np.repeat(tau_sep_i[k+1]-tau_sep_i[k], len(tau_sep_i[k:-k])-1)) for tau_sep_i in estGraphon.tau_sep if (len(tau_sep_i[k:-k]) > 0)]):
+                warnings.warn('manually adapted knot positions have been discarded')
+                print('UserWarning: manually adapted knot positions have been discarded')
+            if (lambdaMin is not None) and (not np.isscalar(lambdaMin)):
+                lambdaMin = [lambdaMin[np.logical_not(emptyGr)][:, np.logical_not(emptyGr)][lmbd_selction][:, lmbd_selction] \
+                             for lmbd_selction in [np.sort(np.append(np.arange(np.logical_not(emptyGr).sum()), np.searchsorted(splitPos_rmv, newSplits) - 1))]][0]
+            if (lambdaMax is not None) and (not np.isscalar(lambdaMax)):
+                lambdaMax = [lambdaMax[np.logical_not(emptyGr)][:, np.logical_not(emptyGr)][lmbd_selction][:, lmbd_selction] \
+                             for lmbd_selction in [np.sort(np.append(np.arange(np.logical_not(emptyGr).sum()), np.searchsorted(splitPos_rmv, newSplits) - 1))]][0]
+            estGraphon=estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs, nKnots=nKnots, splitPos=newSplitPos, est_splitPos=False, useOneBasis=useOneBasis, tau=None, tau_sep=None,
+                                                         optForAIC=optForAIC, lambdaMin=lambdaMin, lambdaMax=lambdaMax, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
                                                          adjustSubs=adjustSubs, lambda_adjustSubs=lambda_adjustSubs, adjustQuantiles=adjustQuantiles, lambda_adjustQuant=lambda_adjustQuant,
-                                                         Us_mult=Us_mult, canonical=canonical, updateGraph=True, printWarn=False)
+                                                         Us_mult=None, canonical=canonical, updateGraph=True, printWarn=False)
             if makePlots:
-                estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + labNb.__str__() + '.png')
+                estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + index.__str__() + '_newSplit.png')
                 if not (make_show or savefig):
                     plt.clf()
-            ## force the algorithm to keep the given number of communities
-            if np.any(estGraphon.freqUsSub == 0):
-                emptyGr = (estGraphon.freqUsSub == 0)
-                warnings.warn('[result nb ' + labNb.__str__() + '] empty communit' + (('y ' + (np.where(emptyGr)[0][0]+1).__str__() + ' has') if (emptyGr.sum() == 1) else ('ies ' + ', '.join((np.where(emptyGr)[0]+1).astype(str)) + ' have')) + ' been removed')
-                print('UserWarning: [result nb ' + labNb.__str__() + '] empty communit' + (('y ' + (np.where(emptyGr)[0][0]+1).__str__() + ' has') if (emptyGr.sum() == 1) else ('ies ' + ', '.join((np.where(emptyGr)[0]+1).astype(str)) + ' have')) + ' been removed')
-                us_ = np.concatenate([np.linspace(estGraphon.splitPos[i],estGraphon.splitPos[i+1], int(np.round(estGraphonData.sortG.N*((estGraphon.splitPos[i+1]-estGraphon.splitPos[i])/(1-sizeOff)))) +2)[1:-1] for sizeOff in [np.sum([(estGraphon.splitPos[i+1]-estGraphon.splitPos[i]) for i in range(estGraphon.nSubs) if emptyGr[i]])] for i in range(estGraphon.nSubs) if (not emptyGr[i])])
-                vs_list = [(tau_sep_i[k:-k] + np.concatenate(([1e-5],np.repeat(0,len(tau_sep_i[k:-k])-2),[-1e-5]))) for tau_sep_i in np.array(estGraphon.tau_sep)[np.logical_not(emptyGr)]]
-                lenVs = np.array([len(vs_list_i) for vs_list_i in vs_list])
-                vs_ = np.concatenate(vs_list)
-                probMat = estGraphon.fct(us_, vs_)
-                newSplits = [vs_list[group_i][val_i - (np.append([0], np.cumsum(lenVs - 1))[group_i]) + np.array([0, 1])].mean() for val_i in (np.delete(np.diff(probMat), np.cumsum(lenVs)[:-1] - 1, axis=1) ** 2).sum(axis=0).argsort()[-np.sum(emptyGr):] for group_i in [np.sum(np.cumsum(lenVs - 1) < (val_i + 1))]]
-                newSplitPos = np.sort(np.concatenate(((estGraphon.splitPos[np.concatenate((np.logical_not(emptyGr), [True]))] + estGraphon.splitPos[np.concatenate(([True], np.logical_not(emptyGr)))])/2, newSplits)))
-                newSplitPos[0], newSplitPos[-1] = 0., 1.
-                warnings.warn((('a new split has') if (emptyGr.sum() == 1) else ('new splits have')) + ' been inserted at ' + ', '.join(map(lambda x: str(round(x,4)), newSplits)))
-                print('UserWarning: ' + (('a new split has') if (emptyGr.sum() == 1) else ('new splits have')) + ' been inserted at ' + ', '.join(map(lambda x: str(round(x,4)), newSplits)))
-                if not np.all([np.allclose(np.diff(tau_sep_i[k:-k]), np.repeat(tau_sep_i[k+1]-tau_sep_i[k], len(tau_sep_i[k:-k])-1)) for tau_sep_i in estGraphon.tau_sep if (len(tau_sep_i[k:-k]) > 0)]):
-                    warnings.warn('manually adapted knot positions have been discarded')
-                    print('UserWarning: manually adapted knot positions have been discarded')
-                print(estGraphon.splitPos, newSplitPos)  # !!!
-                estGraphon=estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs, nKnots=nKnots, splitPos=newSplitPos, est_splitPos=False, useOneBasis=useOneBasis, tau=None, tau_sep=None,
-                                                             optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
-                                                             adjustSubs=adjustSubs, lambda_adjustSubs=lambda_adjustSubs, adjustQuantiles=adjustQuantiles, lambda_adjustQuant=lambda_adjustQuant,
-                                                             Us_mult=Us_mult, canonical=canonical, updateGraph=True, printWarn=False)
-                if makePlots:
-                    estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + labNb.__str__() + '_newSplit.png')
-                    if not (make_show or savefig):
-                        plt.clf()
-            ## remove marginalized segments [should not occur when a certain number of communities is forced, except in the last iteration]
-            if np.any([np.allclose(tau_sep_i, tau_sep_i[k]) for tau_sep_i in estGraphon.tau_sep]):
-                emptySub = np.array([np.allclose(tau_sep_i, tau_sep_i[k]) for tau_sep_i in estGraphon.tau_sep])
-                warnings.warn('[result nb ' + labNb.__str__() + '] empty segment' + ((' ' + (np.where(emptySub)[0][0]+1).__str__() + ' has') if (emptySub.sum() == 1) else ('s ' + ', '.join((np.where(emptySub)[0]+1).astype(str)) + ' have')) + ' been removed')
-                print('UserWarning: [result nb ' + labNb.__str__() + '] empty segment' + ((' ' + (np.where(emptySub)[0][0]+1).__str__() + ' has') if (emptySub.sum() == 1) else ('s ' + ', '.join((np.where(emptySub)[0]+1).astype(str)) + ' have')) + ' been removed')
-                tau_sep_new = list(np.array(estGraphon.tau_sep)[np.logical_not(emptySub)])
-                tau_new = np.concatenate([tau_sep_new[i][(0 if (i == 0) else (k + 1)):] for i in range(len(tau_sep_new))])
-                nKnots_new = estGraphon.nKnots[np.logical_not(emptySub)]
-                estGraphon = estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs -emptySub.sum(), nKnots=nKnots_new, splitPos=None, est_splitPos=False, useOneBasis=useOneBasis, tau=tau_new, tau_sep=tau_sep_new,
-                                                               optForAIC=optForAIC, lambdaMin=None, lambdaMax=None, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
-                                                               adjustSubs=adjustSubs, lambda_adjustSubs=lambda_adjustSubs, adjustQuantiles=adjustQuantiles, lambda_adjustQuant=lambda_adjustQuant,
-                                                               Us_mult=Us_mult, canonical=canonical, updateGraph=True, printWarn=False)
-                if makePlots:
-                    estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + labNb.__str__() + '_remSub.png')
-                    if not (make_show or savefig):
-                        plt.clf()
-                if not (lambdas_ is None):
-                    lambdas_ = np.array([lambda_i[np.logical_not(emptySub)][:,np.logical_not(emptySub)] for lambda_i in lambdas_])
-                if not (lambdaList is None):
-                    lambdaList = np.array([lambda_i[np.logical_not(emptySub)][:, np.logical_not(emptySub)] for lambda_i in lambdaList])
-            if optForAIC:
-                lambda_ = estGraphon.lambda_
-                if lmd_phase4a:  # (index in range(lambda_skip2+1,lambda_lim2+1))
-                    if lambdas_ is None:
-                        lambdas_ = np.expand_dims(lambda_, axis=0)
-                    else:
-                        lambdas_ = np.concatenate((lambdas_, np.expand_dims(lambda_, axis=0)), axis=0)
-                if lmd_phase4b:  # (index == lambda_lim2)
-                    lambda_ = lambdas_.mean(axis=0)
-            if returnLambList:
-                if (lambdaList is None):
-                    lambdaList = np.array([estGraphon.lambda_])
-                else:
-                    lambdaList = np.append(lambdaList, np.array([estGraphon.lambda_]), axis=0)
+        ## remove marginalized segments [should not occur when a certain number of communities is forced, see above]
+        if np.any([np.allclose(tau_sep_i, tau_sep_i[k]) for tau_sep_i in estGraphon.tau_sep]):
+            emptySub = np.array([np.allclose(tau_sep_i, tau_sep_i[k]) for tau_sep_i in estGraphon.tau_sep])
+            warnings.warn('[result nb ' + index.__str__() + '] empty segment' + ((' ' + (np.where(emptySub)[0][0]+1).__str__() + ' with interval ' + str(estGraphon.splitPos[np.where(emptySub)[0][0] + np.array([0, 1])]) + ' has') if (emptySub.sum() == 1) else \
+                                                                                     ('s ' + ', '.join((np.where(emptySub)[0]+1).astype(str)) + ' with intervals ' + ', '.join([str(estGraphon.splitPos[epty_i + np.array([0, 1])]) for epty_i in np.where(emptySub)[0]]) + ' have')) + \
+                          ' been removed')
+            print('UserWarning: [result nb ' + index.__str__() + '] empty segment' + ((' ' + (np.where(emptySub)[0][0]+1).__str__() + ' with interval ' + str(estGraphon.splitPos[np.where(emptySub)[0][0] + np.array([0, 1])]) + ' has') if (emptySub.sum() == 1) else \
+                                                                                     ('s ' + ', '.join((np.where(emptySub)[0]+1).astype(str)) + ' with intervals ' + ', '.join([str(estGraphon.splitPos[epty_i + np.array([0, 1])]) for epty_i in np.where(emptySub)[0]]) + ' have')) + \
+                          ' been removed')
+            tau_sep_new = list(np.array(estGraphon.tau_sep)[np.logical_not(emptySub)])
+            tau_new = np.concatenate([tau_sep_new[i][(0 if (i == 0) else (k + 1)):] for i in range(len(tau_sep_new))])
+            nKnots_new = estGraphon.nKnots[np.logical_not(emptySub)]
+            warnings.warn('number of groups has been reduced from ' + nSubs.__str__() + ' to ' + (nSubs - emptySub.sum()).__str__())
+            print('UserWarning: number of groups has been reduced from ' + nSubs.__str__() + ' to ' + (nSubs - emptySub.sum()).__str__())
+            nSubs = nSubs - emptySub.sum()
+            if (lambdaMin is not None) and (not np.isscalar(lambdaMin)):
+                lambdaMin = lambdaMin[np.logical_not(emptySub)][:,np.logical_not(emptySub)]
+            if (lambdaMax is not None) and (not np.isscalar(lambdaMax)):
+                lambdaMax = lambdaMax[np.logical_not(emptySub)][:,np.logical_not(emptySub)]
+            estGraphon = estGraphonData.GraphonEstBySpline(k=k, nSubs=nSubs, nKnots=nKnots_new, splitPos=None, est_splitPos=False, useOneBasis=useOneBasis, tau=tau_new, tau_sep=tau_sep_new,
+                                                           optForAIC=optForAIC, lambdaMin=lambdaMin, lambdaMax=lambdaMax, calcAIC=True, lambda_=(None if optForAIC else lambda_), critType=critType,
+                                                           adjustSubs=adjustSubs, lambda_adjustSubs=lambda_adjustSubs, adjustQuantiles=adjustQuantiles, lambda_adjustQuant=lambda_adjustQuant,
+                                                           Us_mult=None, canonical=canonical, updateGraph=True, printWarn=False)
+            if makePlots:
+                estGraphon.showColored(log_scale=log_scale, make_show=make_show, savefig=savefig, file_=dir_ + 'graphon_est_' + index.__str__() + '_remSub.png')
+                if not (make_show or savefig):
+                    plt.clf()
+            lambdaList = np.zeros((0, nSubs, nSubs)) if (lambdaList.shape[0] == 0) else np.array([lambda_i[np.logical_not(emptySub)][:, np.logical_not(emptySub)] for lambda_i in lambdaList])
+        if returnLambList:
+            lambdaList = np.concatenate((lambdaList, np.expand_dims((np.ones((nSubs, nSubs)) * estGraphon.lambda_) if np.isscalar(estGraphon.lambda_) else estGraphon.lambda_, axis=0)), axis=0)
         if returnGraphonList:
             estGraphonList.append(estGraphon)
         trajMat = np.append(trajMat, estGraphon.fct(np.arange(1, n_eval+1) / (n_eval+1), np.arange(1, n_eval+1) / (n_eval+1)).reshape(1, n_eval, n_eval), axis=0)
@@ -212,31 +265,58 @@ def iterateEM(sortG,
                 showOptForAIC(AIC_opt_lamb_list=estGraphon.AIC_opt_lamb_list, AIC_opt_vals_list=estGraphon.AIC_opt_vals_list, m=index, make_show=make_show, savefig=savefig, file_=dir_ + 'AIC_OptProfile')
                 if not (make_show or savefig):
                     plt.clf()
+        if index >= 3:
+            stopCrit = np.max(np.abs((AIC_vec[-2:] - AIC_vec[(-3):(-1)]) / AIC_vec[(-3):(-1)]))
+            doRep_logic = stopCrit > stopVal
+        eval("print('\\n' + ('initial ' if (index <= n_init) else '') + 'iteration completed:', index - (0 if (index <= n_init) else n_init), '/', n_init if (index <= n_init) else (n_maxIter - n_init), " + \
+             "'\\n' + critType + ':', np.round(AIC_vec[-1], 1), " + ("'[ last iteration:', np.round(AIC_vec[-2], 1), ']', " if (index >= 2) else "") + \
+             ("'\\nstop criterion:', np.round(stopCrit, 5), '>' if doRep_logic else '<=', np.round(stopVal, 5), " if (index >= 3) else "") + \
+             "'\\npenalizing parameter lambda:', " + ("" if np.isscalar(estGraphon.lambda_) else "'\\n', ") + "estGraphon.lambda_, '\\nnumber of " + \
+             ("Gibbs sampling stages:', rep[0]" if (updateStrategy == 'gibbs') else "greedy search trials:', n_try") + \
+             (", '\\nparameter for step-wise adjustment of subareas:', np.round(lambda_adjustSubs, 3)" if adjustSubs else "") + \
+             (", '\\nparameter for step-wise quantile adjustment:', np.round(lambda_adjustQuant, 3)" if adjustQuantiles else "") + \
+             (", '\\n\\ncalculate posterior distribution:\\n'" if ((((not doRep_logic) and (index > n_init + 1)) or (index == n_maxIter)) and (rep_forPost > 0)) else "") + ", '\\n')")
+        if (not doRep_logic) and (index > n_init + 1):
+            if (rep_forPost > 0):
+                rep[1] = rep_forPost
+            else:
+                break
         ### Sample U's
-        if (index < n_iter) or (endWithSamp and (rep_forPost > 0)):
+        if (index <= n_init) and init_allRandom:
+            sortG.update(Us_est = np.random.uniform(0,1,sortG.N))
+        if (index < n_maxIter) or (rep[1] > 0):
             print('Sampling')
-            rep = rep_start if (index < it_rep_grow) else (int(np.round((rep_start**(n_iter-it_rep_grow) / rep_end)**(1/(n_iter-it_rep_grow-1)) * np.exp(np.log(rep_start / (rep_start**(n_iter-it_rep_grow) / rep_end)**(1/(n_iter-it_rep_grow-1))) * (index-it_rep_grow+1)))) if (index < n_iter) else (rep_forPost))
             sample=Sample(sortG=sortG,graphon=estGraphon,use_origFct=use_origFct)
-            sample.gibbs(steps=n_steps,rep=rep,proposal=proposal,sigma_prop=sigma_prop_,gamma=gamma,splitPos=None,averageType=averageType,returnAllGibbs=returnAllGibbs,updateGraph=False,use_stdVals =None,printWarn=False)
+            if updateStrategy == 'gibbs':
+                sample.gibbs(steps=n_steps,burnIn=burnIn,rep=rep[1],proposal=proposal,sigma_prop=sigma_prop_,gamma=gamma,splitPos=None,averageType=averageType_,returnAllGibbs=returnAllGibbs,updateGraph=False,use_stdVals=None,printWarn=False)
+            elif updateStrategy == 'greedy':
+                sample.greedy(max_steps=max_steps,n_try=n_try,useSubsmpl=True, alpha_subsmpl=None, splitPos=None, updateGraph=False, use_stdVals=None, printWarn=False)
+            else:
+                raise ValueError('update strategy \'' + str(updateStrategy) + '\' is not implemented')
             if makePlots:
-                sample.showMove(useColor=True if simulate else False, EMstep_sign=labNb, make_show=make_show, savefig=savefig, file_=dir_ + 'Us_move_' + labNb.__str__() + '.png')
+                sample.showMove(useColor=True if simulate else False, showSplitPos=True, EMstep_sign=index, make_show=make_show, savefig=savefig, file_=dir_ + 'Us_move_' + index.__str__() + '.png')
                 if not (make_show or savefig):
                     plt.clf()
                 if simulate:
-                    sample.showMove(Us_type='real', useAllGibbs=True, EMstep_sign=labNb, make_show=make_show, savefig=savefig, file_=dir_ + 'UsMCMC_diffReal_' + labNb.__str__() + '.png')
+                    sample.showMove(Us_type='real', useAllGibbs=True, useColor=True, showSplitPos=True, splitPos_real=splitPos_real, EMstep_sign=index, make_show=make_show, savefig=savefig, file_=dir_ + 'UsMCMC_diffReal_' + index.__str__() + '.png')
                     if not (make_show or savefig):
                         plt.clf()
             if returnSampList:
                 sampleList.append(sample)
-            ## update graph is now included in Sample()
-        eval("print('iteration completed:', index, ', penalizing parameter lambda:', lambda_, ',  number of Gibbs sampling stages:', rep" + \
-             (", ',\\nparameter for step-wise adjustment of subareas:', np.round(lambda_adjustSubs, 3)" if (adjustSubs and (startWithEst or (index > 1))) else "") + \
-             (", ',\\nparameter for step-wise quantile adjustment:', np.round(lambda_adjustQuant, 3)" if (adjustQuantiles and (startWithEst or (index > 1))) else "") + ")")
+        if (not doRep_logic) and (index > n_init + 1):
+            break
+        index += 1
+    if index > n_maxIter:
+        warnings.warn('EM algorithm did not converge; recent relative change in criterion: ' + \
+                      np.round(stopCrit, 5).__str__() + ' > ' + np.round(stopVal, 5).__str__())
+        print('UserWarning: EM algorithm did not converge; recent relative change in criterion: ' + \
+              np.round(stopCrit, 5).__str__() + ' > ' + np.round(stopVal, 5).__str__())
     result = type('', (), {})()
+    result.params = type('', (), {})()
+    result.params.n_iter, result.params.rep = index - (1 - (not doRep_logic)) - n_init, rep[0]
     result.sortG = sortG
     result.estGraphon = estGraphon
     result.sample = sample
-    result.lambda_ = lambda_
     result.trajMat = trajMat
     result.AIC_vec = AIC_vec
     if returnLambList:

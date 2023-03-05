@@ -33,13 +33,12 @@ def colorBar(mappable, ticks=None):
 def fctToMat(fct,size):
     # fct = specific graphon function, size = fineness of the return matrix
     if np.isscalar(size):
-        us_i=us_j=np.linspace(0,1,size)
+        us_i=us_j=np.arange(size) / size + 1 / (size * 2)
         size0 = size1 = size
     else:
-        us_i=np.linspace(0,1,size[0])
-        us_j=np.linspace(0,1,size[1])
-        size0 = size[0]
-        size1 = size[1]
+        us_i=np.arange(size[0]) / size[0] + 1 / (size[0] * 2)
+        us_j=np.arange(size[1]) / size[1] + 1 / (size[1] * 2)
+        size0, size1 = size[0], size[1]
     try:
         if fct(np.array([0.3,0.7]), np.array([0.3,0.7])).ndim == 1:
             if len(us_i) < len(us_j):
@@ -59,13 +58,23 @@ def fctToMat(fct,size):
 #out: squared matrix of the dimension (size,size) 
 
 # auxiliary function to get a piecewise constant graphon function out of a matrix
-def matToFct(mat):
+def matToFct(mat,splitPos=None):
     # mat = approx. graphon function on regular grid -> graphon matrix
-    def auxFct(u,v):
-        if np.isscalar(u):
-            return(mat[np.minimum(np.floor(u*mat.shape[0]).astype(int), mat.shape[0]-1)][np.minimum(np.floor(v*mat.shape[1]).astype(int), mat.shape[1]-1)])
-        else:
-            return(mat[np.minimum(np.floor(u*mat.shape[0]).astype(int), mat.shape[0]-1)][:, np.minimum(np.floor(v*mat.shape[1]).astype(int), mat.shape[1]-1)])
+    if splitPos is None:
+        def auxFct(u,v):
+            if np.isscalar(u):
+                return(mat[np.minimum(np.floor(u*mat.shape[0]).astype(int), mat.shape[0]-1)][np.minimum(np.floor(v*mat.shape[1]).astype(int), mat.shape[1]-1)])
+            else:
+                return(mat[np.minimum(np.floor(u*mat.shape[0]).astype(int), mat.shape[0]-1)][:, np.minimum(np.floor(v*mat.shape[1]).astype(int), mat.shape[1]-1)])
+    else:
+        splitPos_mat = np.round(np.array([np.ceil(splitPos * size_i - 1/2) for size_i in mat.shape])).astype(int)
+        def auxFct(u,v):
+            if np.isscalar(u):
+                return(mat[[np.minimum(np.maximum(np.floor(u*mat.shape[0]).astype(int), min_max_u[0]), min_max_u[1] - 1) for gr_ident_u in [np.searchsorted(splitPos, u)] for min_max_u in [[splitPos_mat[0][gr_ident_u - 1], splitPos_mat[0][gr_ident_u]]]][0]][\
+                    [np.minimum(np.maximum(np.floor(v*mat.shape[1]).astype(int), min_max_v[0]), min_max_v[1] - 1) for gr_ident_v in [np.searchsorted(splitPos, v)] for min_max_v in [[splitPos_mat[1][gr_ident_v - 1], splitPos_mat[1][gr_ident_v]]]][0]])
+            else:
+                return(mat[[np.minimum(np.maximum(np.floor(u*mat.shape[0]).astype(int), min_max_u[0]), min_max_u[1] - 1) for gr_ident_u in [np.searchsorted(splitPos, u)] for min_max_u in [[splitPos_mat[0][gr_ident_u - 1], splitPos_mat[0][gr_ident_u]]]][0]][:, \
+                    [np.minimum(np.maximum(np.floor(v*mat.shape[1]).astype(int), min_max_v[0]), min_max_v[1] - 1) for gr_ident_v in [np.searchsorted(splitPos, v)] for min_max_v in [[splitPos_mat[1][gr_ident_v - 1], splitPos_mat[1][gr_ident_v]]]][0]])
     return(auxFct)
 #out: piecewise constant bivariate function
 
@@ -110,6 +119,10 @@ class Graphon:
             if mat is None:
                 raise TypeError('no informations about the graphon')
             self.mat = copy(np.asarray(mat))
+            if (self.mat.min() < 0.) or (self.mat.max() > 1.):
+                warnings.warn('graphon has bad values, correction has been applied -> codomain: [0,1]')
+                print('UserWarning: graphon has bad values, correction has been applied -> codomain: [0,1]')
+                self.mat = np.minimum(np.maximum(self.mat, 0.), 1.)
             self.fct = matToFct(self.mat)
             self.byMat = True
         else:
@@ -118,33 +131,34 @@ class Graphon:
             self.byMat = False
             if not mat is None:
                 if not np.array_equal(np.round(fctToMat(fct,mat.shape), 5),np.round(mat, 5)):
-                    warnings.warn('the partitioning of the graphon in a grid \'mat\' is not exactly according to the graphon function \'fct\' or might be rotated')
-                    print('UserWarning: the partitioning of the graphon in a grid \'mat\' is not exactly according to the graphon function \'fct\' or might be rotated')
+                    warnings.warn('the partitioning of the graphon in a grid (see \'mat\') is not exact according to the graphon function (see \'fct\') or might be rotated')
+                    print('UserWarning: the partitioning of the graphon in a grid (see \'mat\') is not exact according to the graphon function (see \'fct\') or might be rotated')
+            if (self.mat.min() < 0.) or (self.mat.max() > 1.):
+                if (self.mat.min() < -1e-3) or (self.mat.max() > 1 + 1e-3):
+                    warnings.warn('graphon has bad values, correction has been applied to Graphon.mat (not to Graphon.fct) -> codomain: [0,1]')
+                    print('UserWarning: graphon has bad values, correction has been applied to Graphon.mat (not to Graphon.fct) -> codomain: [0,1]')
+                self.mat = np.minimum(np.maximum(self.mat, 0.), 1.)
     def showColored(self, vmin=None, vmax=None, vmin_=0.01, log_scale=False, ticks = [0, 0.25, 0.5, 0.75, 1], showColorBar=True, showSplitPos=False, linestyle='--', colorMap = 'plasma_r', fig_ax=None, make_show=True, savefig=False, file_=None):
-        if (self.mat.min() < -1e-3) or (self.mat.max() > 1 + 1e-3):
-            warnings.warn('graphon has bad values, correction has been applied -> codomain: [0,1]')
-            print('UserWarning: graphon has bad values, correction has been applied -> codomain: [0,1]')
-        self_mat = np.minimum(np.maximum(self.mat,0),1)
         if fig_ax is None:
             fig, ax = plt.subplots()
         else:
             fig, ax = fig_ax
         if vmin is None:
-            vmin = np.nanmin(self_mat)
+            vmin = np.nanmin(self.mat)
         vmin_diff = np.max([vmin_ - vmin, 0])
         if vmax is None:
-            vmax = np.nanmax(self_mat)
+            vmax = np.nanmax(self.mat)
         ## define color for nan values -> light grey
         cmap_ = copy(plt.get_cmap(colorMap))
         cmap_.set_bad(color=plt.get_cmap('binary')(0.2))
-        plotGraphon = ax.matshow(self_mat + vmin_diff, cmap=cmap_, interpolation='none', norm=LogNorm(vmin=vmin + vmin_diff, vmax=vmax + vmin_diff)) if log_scale else \
-        ax.matshow(self_mat, cmap=cmap_, interpolation='none', vmin=vmin, vmax=vmax)
-        plt.xticks(self_mat.shape[1] * np.array(ticks) - 0.5, [(round(round(i,4)) if np.isclose(round(i,4), round(round(i,4))) else round(i,4)).__str__() for i in ticks])
-        plt.yticks(self_mat.shape[0] * np.array(ticks) - 0.5, [(round(round(i,4)) if np.isclose(round(i,4), round(round(i,4))) else round(i,4)).__str__() for i in ticks])
+        plotGraphon = ax.matshow(self.mat + vmin_diff, cmap=cmap_, interpolation='none', norm=LogNorm(vmin=vmin + vmin_diff, vmax=vmax + vmin_diff)) if log_scale else \
+        ax.matshow(self.mat, cmap=cmap_, interpolation='none', vmin=vmin, vmax=vmax)
+        plt.xticks(self.mat.shape[1] * np.array(ticks) - 0.5, [(round(round(i,4)) if np.isclose(round(i,4), round(round(i,4))) else round(i,4)).__str__() for i in ticks])
+        plt.yticks(self.mat.shape[0] * np.array(ticks) - 0.5, [(round(round(i,4)) if np.isclose(round(i,4), round(round(i,4))) else round(i,4)).__str__() for i in ticks])
         plt.tick_params(bottom=False)
         if showColorBar:
             ticks_CBar = [((10**(np.log10(vmin + vmin_diff) - i * (np.log10(vmin + vmin_diff) - np.log10(vmax + vmin_diff)) / 5)) if log_scale else ((i/5) * (vmax - vmin) + vmin)) for i in range(6)]
-            try:  # ***
+            try:
                 cbar = colorBar(plotGraphon, ticks = ticks_CBar)
                 cbar.ax.minorticks_off()
                 cbar.ax.set_yticklabels(np.round(np.array(ticks_CBar) - (vmin_diff if log_scale else 0), 4))
@@ -152,10 +166,10 @@ class Graphon:
                 warnings.warn('plotting color bar not possible')
                 print('UserWarning: plotting color bar not possible')
                 cbar = None
-        if showSplitPos:  # only possible if graphon has been specified as B-spline function - e.g. see byBSpline
+        if showSplitPos:  # only possible if attribute 'splitPos' has been manually added to Graphon object or if B-spline specification is used
             try:
-                lines1 = [ax.axvline(x=x_, color='k', linestyle=linestyle) for x_ in (self.splitPos[1:-1] * self_mat.shape[1] - 0.5)]
-                lines2 = [ax.axhline(y=y_, color='k', linestyle=linestyle) for y_ in (self.splitPos[1:-1] * self_mat.shape[0] - 0.5)]
+                lines1 = [ax.axvline(x=x_, color='k', linestyle=linestyle) for x_ in (self.splitPos[1:-1] * self.mat.shape[1] - 0.5)]
+                lines2 = [ax.axhline(y=y_, color='k', linestyle=linestyle) for y_ in (self.splitPos[1:-1] * self.mat.shape[0] - 0.5)]
             except AttributeError:
                 warnings.warn('no information about the split positions - graphon has to be specified as hierarchical B-spline function')
                 print('UserWarning: no information about the split positions - graphon has to be specified as hierarchical B-spline function')
@@ -167,10 +181,11 @@ class Graphon:
         else:
             return(eval('plotGraphon' + (', cbar' if showColorBar else '') + (', lines1, lines2' if showSplitPos else '')))
     def showSlices(self, vmin=None, vmax=None, vmin_=0.01, log_scale=False, showColorBar=True, lineAttr = {'linewidth': 3, 'alpha': 0.7}, colorMap = 'jet', fig_ax=None, make_show=True, savefig=False, file_=None, figsize_=None):
-        if (self.mat.min() < 0) or (self.mat.max() > 1):
-            warnings.warn('graphon has bad values, correction has been applied -> codomain: [0,1]')
-            print('UserWarning: graphon has bad values, correction has been applied -> codomain: [0,1]')
-        self_mat = np.minimum(np.maximum(self.mat,0),1)
+        nSubs = (len(self.splitPos) -1) if hasattr(self, 'splitPos') else 1
+        if (nSubs > 1.5) or log_scale:
+            self_mat = copy(self.mat)
+        else:
+            self_mat = self.mat
         if fig_ax is None:
             fig, ax = plt.subplots(figsize = figsize_)
             ax = plt.subplot(111)
@@ -183,9 +198,8 @@ class Graphon:
             vmax = np.nanmax(self_mat)
         us_ = np.maximum(1e-3, np.minimum(1-1e-3, np.linspace(0,1,self_mat.shape[0])))
         vs_ = np.linspace(0,1,self_mat.shape[1])
-        if ((len(self.splitPos) > 2) if (hasattr(self, 'splitPos')) else False):
-            # consider adjustment in ExtGraph.showNet
-            nSubs = len(self.splitPos) -1
+        if nSubs > 1.5:
+            ## consider adjustment in ExtGraph.showNet
             deltaTotal = (.45 - 1/nSubs)**2 - (.45**2 -.4)
             splitPos_ext = np.cumsum(np.append([0], np.concatenate([[prop_i, deltaTotal/(nSubs-1)] for prop_i in np.diff(self.splitPos) * (1-deltaTotal)])[:-1]))
             vals_onColScal = [np.linspace(splitPos_ext[i*2],splitPos_ext[i*2+1],int(np.round((splitPos_ext[i*2+1]-splitPos_ext[i*2])*self_mat.shape[0] *10))) for i in range(nSubs)]
@@ -196,7 +210,7 @@ class Graphon:
             us_copy = copy(us_)
             for i in range(nSubs):
                 us_[np.logical_and(us_copy >= self.splitPos[i], us_copy < self.splitPos[i + 1])] = (us_[np.logical_and(us_copy >= self.splitPos[i], us_copy < self.splitPos[i + 1])] - self.splitPos[i]) * (splitPos_new[i + 1] - splitPos_new[i]) / (self.splitPos[i + 1] - self.splitPos[i]) + splitPos_new[i]
-            cmap_vals = plt.get_cmap(colorMap)((np.concatenate(vals_onColScal)))
+            cmap_vals = plt.get_cmap(colorMap)(np.concatenate(vals_onColScal))
             cmap = LinearSegmentedColormap.from_list('my_colormap', cmap_vals)
         else:
             cmap = plt.get_cmap(colorMap)
@@ -218,6 +232,9 @@ class Graphon:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("bottom", size="4%", pad=0)
             cbar = fig.colorbar(sm, orientation="horizontal", cax=cax)
+            if nSubs > 1.5:
+                for splitPos_i in splitPos_new:
+                    cbar.ax.axvline(x=splitPos_i, c='k', linewidth=.5)
         if make_show:
             plt.show()
         if savefig:
@@ -237,7 +254,7 @@ class Graphon:
             plt.ylim((-1/20,21/20))
         plt.xlim((-1/20,21/20))
         plotDegree = plt.plot(us, g_, fmt)
-        if showSplitPos:  # only possible if graphon has been specified as B-spline function - e.g. see byBSpline
+        if showSplitPos:  # only possible if attribute 'splitPos' has been manually added to Graphon object or if B-spline specification is used
             try:
                 plotSplits = [plt.plot(np.repeat(x_,2), [0,np.max(g_)], color='k', linestyle='--') for x_ in (self.splitPos[1:-1])]
             except AttributeError:
@@ -301,7 +318,7 @@ def byExID1(idX,size=101):
 def byExID2(idX,size=101):
     # idX = id of function (see below), size = fineness of the graphon matrix
     examples = {
-                #continuous functions
+                ## continuous functions
                 1: {'fct': lambda u,v: u*v},
                 2: {'fct': lambda u,v: np.exp(-((1-u)**0.7+(1-v)**0.7))},
                 3: {'fct': lambda u,v: 1/4*(u**2+v**2+u**0.5+v**0.5)},
@@ -339,11 +356,11 @@ def byExID2(idX,size=101):
                 31: {'fct': lambda u,v: [eval('interpolate.bisplev(x= np.array(u_, ndmin=1, copy=False)[u_order], y=np.array(v_, ndmin=1, copy=False)[v_order], tck=(tau, tau, np.concatenate((np.tile([0.5,0.5,0.2,0.3,0.3], 2), np.tile([0.2,0.2,0.8,0.1,0.1], 1), np.tile([0.3,0.3,0.1,0.6,0.6], 2))), 2, 2), dx=0, dy=0)' + \
                          (('[np.argsort(u_order)]' + ('[:,' if len(v_order) > 1 else '')) if len(u_order) > 1 else ('[' if len(v_order) > 1 else '')) + \
                          ('np.argsort(v_order)]' if len(v_order) > 1 else '')) for u_ in [u] for v_ in [v] for tau in [np.array([-0.2,-0.1,0,0.45,0.55,1,1.1,1.2])] for v_order in [np.argsort(v)] for u_order in [np.argsort(u)]][0]},
-                #from Y. Zhang 2016
+                ## from Y. Zhang 2016
                 51: {'fct': lambda u,v: np.sin(5 * np.pi *(u+v-1) +1) /2 + 0.5},
                 52: {'fct': lambda u,v: 1 -(1 + np.exp(15 *(0.8 * np.abs(u-v))**(4/5) -0.1))**(-1)},
                 53: {'fct': lambda u,v: np.maximum((u**2 + v**2), 1e-10)/3 * np.cos(1 / (np.maximum((u**2 + v**2), 1e-10))) + 0.15},
-                #discrete functions
+                ## discrete functions
                 101: {'fct': lambda u,v: (0.2 if u < 2/3 else 0.8) if v < 2/3 else (0.8 if u < 2/3 else 0.2), 'splitPos': np.array([0,2/3,1])},
                 102: {'fct': lambda u,v: (0.8 if u < 1/2 else 0.2) if v < 1/2 else (0.2 if u < 1/2 else 0.8), 'splitPos': np.array([0,.5,1])},
                 103: {'fct': lambda u,v: (0.6 if u < 1/2 else 0.2) if v < 1/2 else (0.3 if u < 1/2 else 0.8), 'splitPos': np.array([0,.5,1])},
@@ -354,7 +371,7 @@ def byExID2(idX,size=101):
                 108: {'fct': lambda u,v: (0.55 if u < 1/2 else 0.3) if v < 1/2 else (0.3 if u < 1/2 else 0.55), 'splitPos': np.array([0,1/2,1])},
                 109: {'fct': lambda u,v: (0.4 if u < 1/2 else (0.6 if u < 2/3 else 0.9)) if v < 1/2 else ((0.6 if u < 1/2 else \
                         (0.4 if u < 2/3 else 0.7)) if v < 2/3 else (0.9 if u < 1/2 else (0.7 if u < 2/3 else 0.1))), 'splitPos': np.array([0,1/2,2/3,1])},
-                #mixture models
+                ## mixture models
                 14: {'fct': lambda u,v: ((np.asarray(v) * np.ones(1))+(np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1)) * np.logical_and(v < 1/2, (np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1) < 1/2) + ((np.asarray(v) * np.ones(1))+(np.asarray(u-1) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1)) * np.logical_and(v >= 1/2, (np.asarray(u) * np.ones(1)).reshape(len((np.asarray(u) * np.ones(1))),1) >= 1/2)},
                 15: {'fct': lambda u,v: ((4/3) * u + (2/3) * v) if (v < 1/2 and u < 1/2) else(0 if ((v < 1/2 and u >= 1/2) or (v >= 1/2 and u < 1/2)) else ((2/3) * u + (4/3) * v - 1))},
                 1502: {'fct': lambda u,v: np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) <= 0.5), fctToFct(lambda u_,v_: (4/3) * u_[:, np.newaxis] + (2/3) * v_[np.newaxis, :])(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) <= 0.5)))[()] + \
@@ -408,6 +425,9 @@ def byExID2(idX,size=101):
                                   np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) <= 0.5), fctToFct(lambda u_,v_: .15*((.5-u_[:, np.newaxis]) + (.5-(v_[np.newaxis, :]-.5))))(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) > 0.5)))[()] + \
                                   np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) > 0.5), fctToFct(lambda u_,v_: .15*((.5-(u_[:, np.newaxis]-.5)) + (.5-v_[np.newaxis, :])))(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) <= 0.5)))[()] + \
                                   np.squeeze(np.dot(np.dot(np.diag(np.atleast_1d(u) > 0.5), fctToFct(lambda u_,v_: np.dot(u_[:, np.newaxis]-.5, v_[np.newaxis, :]-.5))(np.atleast_1d(u),np.atleast_1d(v))), np.diag(np.atleast_1d(v) > 0.5)))[()], 'splitPos': np.array([0,.5,1])},
+                ## Erdös-Rényi model
+                301: {'fct': lambda u,v: [p_ if (np.isscalar(u) & np.isscalar(v)) else np.squeeze(np.repeat(np.repeat(p_, len(np.atleast_1d(v)), axis=0)[..., np.newaxis].T, len(np.atleast_1d(u)), axis=0)) for p_ in [.2]][0]},
+                302: {'fct': matToFct(np.array([[.2]]))},
                }
     attr_ = examples[idX]
     GraphonSpeci = Graphon(fct=attr_['fct'], size=size)
@@ -449,6 +469,7 @@ def byExID3(idX,size=101):
                  2302: {'u_lim': np.array([0,0.5,1]), 'wMat': np.array([[0.6,0.2],[0.2,0.8]])},
                  24: {'u_lim': np.array([0,.25,0.5,.75,1]), 'wMat': np.array([[.2,.2,.2,.2],[.2,.2,.2,.8],[.2,.2,.8,.8],[.2,.8,.8,.8]])},
                  2402: {'u_lim': np.array([0,.25,0.5,.75,1]), 'wMat': np.array([[.2,.2,.2,.5],[.2,.2,.5,.8],[.2,.5,.8,.8],[.5,.8,.8,.8]])},
+                 25: {'u_lim': np.array([0., 1.]), 'wMat': np.array([[.2]])},  # Erdös-Rényi model
                  50: {'u_lim': np.array([np.sqrt(i/10) for i in range(11)]), 'wMat': np.array([[(i+j)/(2*10) for j in range(1,11)] for i in range(1,11)])},
                  51: {'u_lim': np.linspace(0,1,11), 'wMat': np.array([[(i+j)/(2*10) for j in range(1,11)] for i in range(1,11)])},
                 }
